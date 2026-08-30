@@ -216,3 +216,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Competition-specific local artifacts
+.DS_Store
+
+# Obtain these from the verified official participant kit; do not commit them.
+/data/
+/evaluator/
+/official_participant_kit/
+
+# Local evaluator outputs and offline experiment artifacts
+/results.json
+/artifacts/
+
+# Optional local semantic-retrieval artifacts
+/models/
+/embeddings/
+/hf_cache/
+*.safetensors
+*.onnx
+*.npy
+*.npz
