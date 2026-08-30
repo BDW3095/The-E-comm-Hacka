@@ -15,8 +15,8 @@ This log records reproducible evaluator experiments and environment preflight. I
 ## E0 — Official starter baseline
 
 - Date: 2026-08-29
-- E0 source commit: pending baseline snapshot commit; this value will be replaced in the follow-up documentation commit.
-- Git tag: pending `e0-baseline` tag.
+- E0 source commit: `27730cec9cfa0a8b07076ebdf4dd388c1a6ef724`
+- Git tag: `e0-baseline`
 - Code state: unmodified official `starter/agent.py` copied from the verified participant kit.
 - Command: `python3 -m evaluator.local_evaluator`
 - Network: not used.
