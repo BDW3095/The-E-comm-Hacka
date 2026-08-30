@@ -458,6 +458,33 @@ def test_constraint_ranker_null_price_not_penalized(index):
     assert by_asin["A0003"] == pytest.approx(original["A0003"])
 
 
+@pytest.mark.parametrize("budget", [["min:25"], ["target:50"]])
+def test_constraint_ranker_does_not_treat_non_max_budget_as_ceiling(index, budget):
+    """B preserves min/target semantics; A must not reinterpret either as max."""
+    retriever = LexicalRetriever(index)
+    ranker = ConstraintRanker(index)
+    candidates = retriever.retrieve("red leather jacket", limit=10)
+    original = {c.parent_asin: c.score for c in candidates}
+    assert "A0002" in original, "precondition failed: A0002 没有被召回"
+
+    ranked = ranker.rerank(candidates, FakeState(positive_slots={"budget": budget}))
+    by_asin = {c.parent_asin: c.score for c in ranked}
+    assert by_asin["A0002"] == pytest.approx(original["A0002"])
+
+
+@pytest.mark.parametrize("budget", [["max:40"], ["under $40"]])
+def test_constraint_ranker_penalizes_only_explicit_upper_budget(index, budget):
+    retriever = LexicalRetriever(index)
+    ranker = ConstraintRanker(index)
+    candidates = retriever.retrieve("red leather jacket", limit=10)
+    original = {c.parent_asin: c.score for c in candidates}
+    assert "A0002" in original, "precondition failed: A0002 没有被召回"
+
+    ranked = ranker.rerank(candidates, FakeState(positive_slots={"budget": budget}))
+    by_asin = {c.parent_asin: c.score for c in ranked}
+    assert by_asin["A0002"] < original["A0002"]
+
+
 def test_constraint_ranker_feature_positive_bonus(index):
     """回归测试：修复前 attrs 字典里没有 'feature' key，这个测试之前会失败（现在应该通过）。"""
     retriever = LexicalRetriever(index)

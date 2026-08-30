@@ -64,15 +64,36 @@ def compile_positive_query(query: str) -> str:
 
 
 def _budget_ceiling(values: list) -> float | None:
-    """兼容两种 budget 表示：结构化 {"min":..,"max":..} 或自然语言字符串（如 "under $30"）。"""
+    """Return only an explicit upper bound from B's budget representation.
+
+    ``min:`` and ``target:`` carry different semantics and must never be
+    reinterpreted as a maximum.  Natural-language strings are accepted only
+    when they contain an unambiguous upper-bound phrase such as ``under`` or
+    ``at most``.
+    """
     ceiling: float | None = None
     for v in values:
         if isinstance(v, dict):
             hi = v.get("max")
-            if isinstance(hi, (int, float)):
-                ceiling = hi if ceiling is None else min(ceiling, hi)
+            if isinstance(hi, (int, float)) and not isinstance(hi, bool):
+                numeric_hi = float(hi)
+                ceiling = numeric_hi if ceiling is None else min(ceiling, numeric_hi)
             continue
-        numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", str(v))]
+
+        text = str(v).strip().lower()
+        kind, separator, _amount = text.partition(":")
+        if separator and kind in {"min", "target"}:
+            continue
+        has_upper_semantics = kind == "max" or bool(
+            re.search(
+                r"(?:<=|\bunder\b|\bbelow\b|\bless\s+than\b|\bup\s+to\b|"
+                r"\bat\s+most\b|\bno\s+more\s+than\b|\bmax(?:imum)?\b)",
+                text,
+            )
+        )
+        if not has_upper_semantics:
+            continue
+        numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", text)]
         if numbers:
             hi = max(numbers)
             ceiling = hi if ceiling is None else min(ceiling, hi)

@@ -370,6 +370,26 @@ def test_information_gain_reads_slots_candidates_and_hyphenated_catalog_text() -
     assert policy.choose(state, candidates, turn=1) == "feature"
 
 
+def test_information_gain_reads_real_slots_candidate_fields() -> None:
+    """Shared Candidate uses slots=True and therefore has no __dict__."""
+    manager, state = _manager_with_state()
+    policy = QuestionPolicy(
+        QuestionPolicyConfig(
+            mode="information_gain",
+            final_turn=10,
+            askable_attributes=("feature", "use_case"),
+        )
+    )
+    candidates = [
+        Candidate("A1", 1.0, "running shoes", {"title": "Running shoes"}),
+        Candidate("A2", 0.9, "hiking boots", {"title": "Hiking boots"}),
+    ]
+
+    # use_case has observed coverage/diversity; feature has none. A fixed-order
+    # fallback to feature would prove that Candidate fields were not read.
+    assert policy.choose(state, candidates, turn=1) == "use_case"
+
+
 def test_policy_outputs_are_always_official_values_or_none() -> None:
     manager, state = _manager_with_state()
     policy = QuestionPolicy()
