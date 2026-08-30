@@ -22,8 +22,8 @@ The verified unmodified official starter baseline is E0, with `TechnicalScore = 
 
 ## Repository layout
 
-- `starter/agent.py` is the official entrypoint. It is the unmodified E0 baseline in the first experiment snapshot; the later D scaffold will make it re-export `src.agent.Agent`.
-- `src/` will hold the team production package after the D scaffold.
+- `starter/agent.py` is the official entrypoint. The E0 baseline remains available through tag `e0-baseline`; on the active integration branch it re-exports `src.agent.Agent`.
+- `src/` is the team production package. Its current D scaffold defines only shared contracts and the official interface; A/B/C modules are integrated in later owner commits.
 - `docs/` contains the implementation plan, organizer Q&A, experiment log, and official reference documents.
 
 The production Agent must remain offline-capable. Do not commit official data, evaluator outputs, model weights, embedding indexes, API keys, or secrets.
