@@ -220,6 +220,9 @@ __marimo__/
 # Competition-specific local artifacts
 .DS_Store
 
+# Local Engineer B handoff workspace; only selected production files move to src/ and tests/.
+/Engineer B work/
+
 # Obtain these from the verified official participant kit; do not commit them.
 /data/
 /evaluator/
