@@ -468,7 +468,7 @@ class LocalParser:
         # The evaluator starts with "I'm looking for <coarse category>".  Keep
         # that explicit category wording as the primary category signal.
         match = re.search(
-            r"\b(?:i'?m\s+)?looking\s+for\s+(?:a|an|some)?\s*(.+?)"
+            r"\b(?:i'?m\s+)?looking\s+for\s+(?:(?:an|a|some)\s+)?(.+?)"
             r"(?=\s*(?:,|\.|;|but\b|a\s+key\s+requirement\b|$))",
             text,
             re.IGNORECASE,
@@ -596,7 +596,19 @@ class StateManager:
         boundary = self.parser.detect_boundary(message)
         should_reset = boundary is None and is_strong_override(message, parsed, state)
         if should_reset:
+            # The released override template replaces an earlier preference,
+            # not the shopping task's product family.  Preserve the existing
+            # category only when the replacement message does not name a new
+            # positive or negative category of its own.
+            parsed_positive = getattr(parsed, "positive_slots", {}) or {}
+            parsed_negative = getattr(parsed, "negative_slots", {}) or {}
+            preserve_category = not (
+                parsed_positive.get("category") or parsed_negative.get("category")
+            )
+            prior_category = list(state.positive_slots.get("category", []))
             self._reset_current_intent(state)
+            if preserve_category and prior_category:
+                state.positive_slots["category"] = prior_category
             try:
                 parsed.is_override = True
             except (AttributeError, TypeError):

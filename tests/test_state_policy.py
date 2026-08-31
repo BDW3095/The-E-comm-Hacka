@@ -128,6 +128,8 @@ def test_parser_prioritises_explicit_category_template_over_fallback_terms() -> 
 
     parsed = parser.parse("I'm looking for shirts, but I'm still exploring.")
     assert parsed.positive_slots["category"] == ["shirts"]
+    parsed = parser.parse("I'm looking for accessories belts, but I'm still exploring.")
+    assert parsed.positive_slots["category"] == ["accessories belts"]
 
     for message in ("bottle cap", "phone ring", "camera bag", "jewelry accessories"):
         assert "category" not in parser.parse(message).positive_slots
@@ -231,10 +233,28 @@ def test_explicit_override_resets_old_slots_question_records_and_exhaustion() ->
 
     assert state.intent_epoch == 1
     assert state.positive_slots["material"] == ["leather"]
+    assert state.positive_slots["category"] == ["boots"]
+    assert "shirt" not in state.positive_slots["category"]
     assert "black" not in state.positive_slots.get("color", [])
     assert state.asked_specific_attributes == set()
     assert state.no_preference_attributes == set()
     assert not state.other_exhausted
+
+
+def test_preference_override_preserves_existing_category_when_no_new_category_is_named() -> None:
+    manager, _ = _manager_with_state()
+    manager.update("session-a", "I'm looking for loafers, but I'm still exploring.", 1)
+
+    state = manager.update(
+        "session-a",
+        "Actually, ignore my earlier preference. What I need is: leather.",
+        2,
+    )
+
+    assert state.intent_epoch == 1
+    assert state.positive_slots["category"] == ["loafers"]
+    assert state.positive_slots["material"] == ["leather"]
+    assert state.last_query == "loafers leather"
 
 
 def test_replacement_signals_reset_only_when_the_turn_has_new_content() -> None:

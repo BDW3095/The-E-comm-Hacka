@@ -44,6 +44,9 @@ _NEGATIVE_PENALTY = 6.0
 _COLOR_BONUS = 1.5
 _BUDGET_PENALTY = 0.5
 _BUDGET_TOLERANCE = 1.15  # 超预算 15% 以内不惩罚，避免把合适商品挤掉
+_GENERIC_CATEGORY_TOKENS = {
+    "clothing", "jewelry", "women", "womens", "men", "mens", "department"
+}
 
 
 def _terms(text: str) -> list[str]:
@@ -172,8 +175,11 @@ class ConstraintRanker:
                 cand_norm = set(attrs.get(key, []))
                 #取出候选商品在该属性上的值
                 if key == "category":
-                    cand_norm |= {self._norm(c) for c in (cand.product.get("categories") or [])}#如果是 category，还要把 product["categories"] 原始品类纳入匹配。
+                    raw_categories = cand.product.get("categories") or []
+                    cand_norm |= {self._norm(c) for c in raw_categories}
                 hit = bool(pos_norm & cand_norm)
+                if not hit and key == "category":
+                    hit = self._category_matches(pos_norm, raw_categories)
                 #判断是否有交集
                 if not hit and key in _SUBSTRING_FALLBACK_KEYS:
                     hit = any(v in surface for v in pos_norm if len(v) >= 3)
@@ -198,11 +204,11 @@ class ConstraintRanker:
                 neg_norm = {self._norm(v) for v in self._flat(neg_values)}
                 cand_norm = set(attrs.get(key, []))
                 if key == "category":
-                    cand_norm |= {
-                        self._norm(category)
-                        for category in (cand.product.get("categories") or [])
-                    }
+                    raw_categories = cand.product.get("categories") or []
+                    cand_norm |= {self._norm(category) for category in raw_categories}
                 neg_hit = bool(neg_norm & cand_norm)
+                if not neg_hit and key == "category":
+                    neg_hit = self._category_matches(neg_norm, raw_categories)
                 if not neg_hit and key in _SUBSTRING_FALLBACK_KEYS:
                     neg_hit = any(v in surface for v in neg_norm if len(v) >= 3)
                 if neg_hit:
@@ -249,6 +255,30 @@ class ConstraintRanker:
     def _attrs_of(self, candidate: Candidate) -> dict[str, list[str]]:
         doc = self._catalog.documents.get(candidate.parent_asin)
         return doc.attributes if doc else {}
+
+    @staticmethod
+    def _category_matches(requested: set[str], categories: Any) -> bool:
+        """Match a coarse category phrase against a catalog category path.
+
+        B stores the evaluator phrase as one value (for example
+        ``shoes loafers slip ons``), while the catalog stores path components
+        such as ``Shoes`` and ``Loafers & Slip-Ons``.  Token overlap bridges
+        that representation mismatch without using labels or fuzzy models.
+        """
+
+        requested_tokens = {
+            token
+            for value in requested
+            for token in TOKEN_RE.findall(value.lower())
+            if len(token) > 1 and token not in _GENERIC_CATEGORY_TOKENS
+        }
+        category_tokens = {
+            token
+            for category in (categories if isinstance(categories, list) else [categories])
+            for token in TOKEN_RE.findall(str(category).lower())
+            if len(token) > 1 and token not in _GENERIC_CATEGORY_TOKENS
+        }
+        return bool(requested_tokens & category_tokens)
 
 
 def validate_recommendations(
