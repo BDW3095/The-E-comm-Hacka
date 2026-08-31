@@ -67,6 +67,37 @@ This log records reproducible evaluator experiments and environment preflight. I
 
 Decision: keep E1 as the first integrated lexical baseline. The dominant E2 target is Intent Override, which accounts for 20 of E1's 39 misses. No public session IDs or labels are used by production code.
 
+## E2 — Preference Override category preservation
+
+- Date: 2026-09-01
+- E2 source commit: `e3fa2c64513a6be9d7927397143cb912246783fc`
+- Branch: `feat/e1-agent-integration` (local; not pushed at recording time)
+- Change: preserve the existing product category when an explicit Override replaces only a preference; replace the category when the new message names a new product category. Also fix the optional-article parser so `accessories` is not truncated to `ccessories`.
+- Command: `python3 -m evaluator.local_evaluator --output artifacts/e2_final_results.json`
+- Repository tests: `80 passed`.
+- Runtime: approximately 53 seconds for 200 public sessions.
+- Network/model usage during evaluation: none; reported tokens: 0.
+- Raw evaluator output: local ignored artifact; not committed.
+
+| Metric | E1 | E2 | Delta |
+|---|---:|---:|---:|
+| Hit Rate@10 | 0.805000 | 0.840000 | +0.035000 |
+| MRR | 0.501044 | 0.510145 | +0.009101 |
+| MTTC | 3.945000 | 3.685000 | -0.260000 |
+| Efficiency | 0.705500 | 0.731500 | +0.026000 |
+| TechnicalScore | **0.693913** | **0.719343** | **+0.025430** |
+
+| Scenario | E1 Hit@10 | E2 Hit@10 | E1 MRR | E2 MRR | E1 MTTC | E2 MTTC |
+|---|---:|---:|---:|---:|---:|---:|
+| Boundary | 0.900000 | 0.900000 | 0.725000 | 0.725000 | 4.000000 | 4.000000 |
+| Browsing | 0.887500 | 0.887500 | 0.536419 | 0.536419 | 3.212500 | 3.212500 |
+| Buying | 0.887500 | 0.887500 | 0.519315 | 0.519315 | 2.900000 | 2.900000 |
+| Intent Override | 0.333333 | 0.566667 | 0.283333 | 0.344008 | 8.666667 | 6.933333 |
+
+Ablation: commit `8076aaa` additionally introduced category token-overlap ranking and scored `0.717105`, but reduced Browsing MRR from `0.536419` to `0.514350`. That global bonus was removed in `e3fa2c6`; the final E2 retains the Override gain without regression in Buying, Browsing, or Boundary.
+
+Decision: keep E2. Intent Override misses fall from 20 to 13, total misses fall from 39 to 32, and all non-Override scenario metrics remain unchanged from E1.
+
 ## Frozen decisions after preflight
 
 - E0 remains the comparison baseline; later runs must be labeled E1, E2, or E3 and must not replace E0.
