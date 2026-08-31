@@ -278,7 +278,7 @@ B 负责 user_message → parse → SessionState → query / ask_attribute。官
 - 定义 is_strong_override(message, parsed, state)。实现为两个明确分支：(a) ignore my earlier/previous preference、forget what I said、start over 等显式撤销短语，直接 reset；(b) instead、rather than、change from、switch from 等替换短语，且本轮具有非空 normalized_query 或新 slot 时 reset。不能只匹配单个单词 change、switch 或 rather。
 - actually 单独出现永远不是 reset 信号；actually 加一个普通新 slot 也只合并。例如 Actually, I also want blue 必须保留旧 cotton。公开 evaluator 的 Override 句含 ignore my earlier preference，因此仍会被第一分支稳定识别。
 - 实现 StateManager.reset(session_id, profile)、update(session_id, message, turn)、build_query(state)。
-- Override 时清空当前意图的 positive/negative slots、asked_specific_attributes、no_preference_attributes 与 other_exhausted；再合并本轮 slots 并增加 intent_epoch。
+- Override 时清空当前意图的 positive/negative preference slots、asked_specific_attributes、no_preference_attributes 与 other_exhausted；若 replacement turn 没有给出新的 category，则保留当前 product family category。`instead of`、`rather than`、`change from ... to`、`switch from ... to` 的旧侧 value 不得重新写入新 intent；随后合并新侧 slots 并增加 intent_epoch。
 - build_query 只使用当前意图有效正向条件和商品类型。profile tags 仅交给 A 作极弱 tie-break，profile summary 不进入 query。
 
 **src/policy.py**
@@ -299,7 +299,7 @@ ask_attribute 是 evaluator 消费的结构化字段；message 只是给 demo �
 覆盖：
 
 - session 隔离、cumulative query、negative condition。
-- 普通 actually 合并；显式撤销、instead、rather than 的强 Override reset；孤立 change/rather 不 reset。
+- 普通 `actually` 合并；显式撤销、`instead`、`rather than` 的强 Override reset；孤立 `change`/`rather` 不 reset。replacement statement 的旧侧 size、budget、lexical feature 与 raw feature 必须被丢弃，新侧 value 仍须正常解析。
 - 使用 released template 验证 Boundary：首次 no preference for other 后仍请求 other；只有 no additional preference for other 才 exhausted；Turn 10 为 None。
 - category 与 brand 永不被选择。
 - simulator_optimized 与 information_gain 两种 config mode。
@@ -533,7 +533,7 @@ Report integration assumptions, changed files, tests, and results.
 - 每轮 response 有 string message、allowed ask_attribute，并恰好有 10 个有效且唯一 parent_asin；候选不足时由稳定 fallback 补齐。
 - Turn 1–9 默认持续 other，直到真正 exhausted；Turn 10 才返回 None。
 - 使用 released template 回归 other-until-exhausted：首次 no preference 后继续请求 other，只有 no additional preference 才视为 exhausted。
-- actually 单独出现不 reset；明确替换意图会清空旧 intent state。
+- `actually` 单独出现不 reset；明确替换意图会清空旧 preference state，但 replacement turn 未提供新 category 时保留当前 product family category；replacement 旧侧 value 不得重新进入 state。
 - black 等明确 color 命中可加分；non-match、多色、缺失或不可靠 color 均中性，不做 penalty 或 hard filter。
 - category、brand 不主动询问，但可用于 ranking。
 - price=None 保留候选；negative token 不进 FTS 正向 query。

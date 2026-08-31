@@ -140,6 +140,81 @@ Decision: keep E3. Total misses fall from 32 to 24, rank-1 hits rise from 79 to 
 - Default `RankingConfig.color_conflict_mode` will be `positive_evidence_only`: desired-color evidence may receive a bonus; non-match, multicolor, missing, and unreliable color evidence remain neutral.
 - `SEMANTIC_ENABLED` remains `False` until the E2/E3 score gate and runtime / model-package submission limits are confirmed.
 
+## E4 V1 — Catalog precision hardening
+
+- Date: 2026-09-01
+- E4 V1 source commit: `65b1511e6195e7dda3ee9943518c4f889bde9e92`
+- Base: E3 documentation snapshot `b21ec96`
+- Branch: `exp/e4-a-b-hardening`
+- Changes:
+  - Route structured `details` values only to their declared attribute.
+  - Keep `store` as brand and FTS5 evidence, but exclude it from structured attribute extraction.
+  - Keep full brand phrases and generate only conservative legal-suffix / leading-`the` aliases.
+  - Canonicalize hyphen, underscore, and repeated whitespace forms such as `quick-dry`, `quick_dry`, and `quick dry`.
+  - Canonicalize `ConstraintRanker` fallback surface text without changing E3 query-coverage reranking.
+- Validation:
+  - `python -m pytest tests/test_catalog.py -q`: `50 passed`.
+  - Full repository regression: passed.
+  - `git diff --check`: passed.
+- Command: `time python -m evaluator.local_evaluator`
+- Runtime: `33.398 seconds` for 200 public sessions.
+- Network/model usage during evaluation: none; reported tokens: 0.
+- Raw evaluator output: local ignored artifact; not committed.
+
+| Metric | E3 | E4 V1 | Delta |
+|---|---:|---:|---:|
+| Hit Rate@10 | 0.880000 | 0.880000 | 0.000000 |
+| MRR | 0.554861 | 0.554861 | 0.000000 |
+| MTTC | 3.330000 | 3.330000 | 0.000000 |
+| Efficiency | 0.767000 | 0.767000 | 0.000000 |
+| TechnicalScore | **0.759858** | **0.759858** | **0.000000** |
+
+| Scenario | E3 Hit@10 | E4 V1 Hit@10 | E3 MRR | E4 V1 MRR | E3 MTTC | E4 V1 MTTC |
+|---|---:|---:|---:|---:|---:|---:|
+| Boundary | 1.000000 | 1.000000 | 0.743452 | 0.743452 | 3.200000 | 3.200000 |
+| Browsing | 0.937500 | 0.937500 | 0.560813 | 0.560813 | 2.775000 | 2.775000 |
+| Buying | 0.925000 | 0.925000 | 0.591682 | 0.591682 | 2.550000 | 2.550000 |
+| Intent Override | 0.566667 | 0.566667 | 0.377937 | 0.377937 | 6.933333 | 6.933333 |
+
+Decision: keep E4 V1. The catalog and fallback-matching correctness improvements preserve every E3 public metric and scenario result. E3 query-coverage reranking remains intact. Proceed to V2/V3 replacement-side parser regression work.
+
+## E4 V3 — Replacement-side parser isolation
+
+- Date: 2026-09-01
+- E4 V3 source commit: `09f8a21`
+- Base: E4 V1 (`65b1511e6195e7dda3ee9943518c4f889bde9e92`) on `exp/e4-a-b-hardening`.
+- V2 proof: three new regression tests initially reproduced old-side leakage from replacement statements:
+  - `Rather than size M, I need size L` retained `medium` alongside `large`.
+  - `Instead of over $50, I need under $100` retained the old minimum budget.
+  - `Rather than a short sleeve jacket, I need a waterproof jacket` could retain `short sleeve`.
+- V3 change: pass `replaced_value_scopes` through contextual-size, lexical-only-feature, budget, and explicit-raw-feature extraction. Values in the old side of `instead of`, `rather than`, `change from ... to`, or `switch from ... to` are discarded before the new turn is merged. This does not change the existing strong-Override reset, category-inheritance, `actually`, or `other-until-exhausted` rules.
+- Validation:
+  - Replacement-side regressions: `3 passed`.
+  - `python -m pytest tests/test_state_policy.py -q`: `32 passed`.
+  - `python -m pytest -q`: `95 passed`.
+  - `git diff --check`: passed.
+- Command: `python -m evaluator.local_evaluator --output artifacts/e4_v3_results.json`
+- Runtime/model usage: local lexical P0/P1 only; no network or model; reported tokens: 0.
+- Raw evaluator output and generated comparison: ignored local artifacts `artifacts/e4_v3_results.json` and `artifacts/e4_v1_vs_v3.md`.
+
+| Metric | E4 V1 | E4 V3 | Delta |
+|---|---:|---:|---:|
+| Hit Rate@10 | 0.880000 | 0.880000 | 0.000000 |
+| MRR | 0.554861 | 0.554861 | 0.000000 |
+| MTTC | 3.330000 | 3.330000 | 0.000000 |
+| Efficiency | 0.767000 | 0.767000 | 0.000000 |
+| TechnicalScore | **0.759858** | **0.759858** | **0.000000** |
+
+| Scenario | E4 V1 Hit@10 | E4 V3 Hit@10 | E4 V1 MRR | E4 V3 MRR | E4 V1 MTTC | E4 V3 MTTC |
+|---|---:|---:|---:|---:|---:|---:|
+| Boundary | 1.000000 | 1.000000 | 0.743452 | 0.743452 | 3.200000 | 3.200000 |
+| Browsing | 0.937500 | 0.937500 | 0.560813 | 0.560813 | 2.775000 | 2.775000 |
+| Buying | 0.925000 | 0.925000 | 0.591682 | 0.591682 | 2.550000 | 2.550000 |
+| Intent Override | 0.566667 | 0.566667 | 0.377937 | 0.377937 | 6.933333 | 6.933333 |
+
+Decision: keep E4 V3. Public metrics are unchanged from E3/E4 V1, while replacement-language correctness and the declared Override contract are now protected by regressions.
+
+
 ## Open gates
 
 - Final runtime limits, network policy, model-weight packaging, derived-index packaging, and package-size limits remain unconfirmed.
