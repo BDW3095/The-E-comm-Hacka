@@ -37,6 +37,36 @@ This log records reproducible evaluator experiments and environment preflight. I
 | Buying | 80 | 0.237500 | 0.126508 | 8.625000 |
 | Intent Override | 30 | 0.133333 | 0.104167 | 10.066667 |
 
+## E1 — Deterministic A/B/D integration
+
+- Date: 2026-09-01
+- E1 source commit: `a3636cff5564bb1513bcaa5b9561c07c12a94fa6`
+- Branch: `feat/e1-agent-integration` (local; not pushed at recording time)
+- Code state: B state update → A lexical Top-200 → A constraint rerank → B question policy → D validation/official response assembly.
+- Command: `python3 -m evaluator.local_evaluator --output artifacts/e1_results.json`
+- Repository tests: `79 passed`.
+- Runtime: approximately 52 seconds for 200 public sessions on the local Windows environment.
+- Network/model usage during evaluation: none; reported tokens: 0.
+- Raw evaluator output: local ignored artifact; not committed.
+
+| Metric | E0 | E1 | Delta |
+|---|---:|---:|---:|
+| Sample count | 200 | 200 | 0 |
+| Hit Rate@10 | 0.125000 | 0.805000 | +0.680000 |
+| MRR | 0.068034 | 0.501044 | +0.433010 |
+| MTTC | 9.810000 | 3.945000 | -5.865000 |
+| Efficiency | 0.119000 | 0.705500 | +0.586500 |
+| TechnicalScore | **0.106710** | **0.693913** | **+0.587203** |
+
+| Scenario | Sample count | Hit Rate@10 | MRR | MTTC |
+|---|---:|---:|---:|---:|
+| Boundary | 10 | 0.900000 | 0.725000 | 4.000000 |
+| Browsing | 80 | 0.887500 | 0.536419 | 3.212500 |
+| Buying | 80 | 0.887500 | 0.519315 | 2.900000 |
+| Intent Override | 30 | 0.333333 | 0.283333 | 8.666667 |
+
+Decision: keep E1 as the first integrated lexical baseline. The dominant E2 target is Intent Override, which accounts for 20 of E1's 39 misses. No public session IDs or labels are used by production code.
+
 ## Frozen decisions after preflight
 
 - E0 remains the comparison baseline; later runs must be labeled E1, E2, or E3 and must not replace E0.
