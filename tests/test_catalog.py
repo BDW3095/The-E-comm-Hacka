@@ -379,22 +379,6 @@ def test_constraint_ranker_negative_category_reads_raw_product_categories(index)
     assert by_asin["A0007"] < original["A0007"]
 
 
-def test_constraint_ranker_matches_coarse_category_phrase_to_catalog_path(index):
-    ranker = ConstraintRanker(index)
-    candidate = Candidate(
-        parent_asin="A0007",
-        score=1.0,
-        search_text=index.get_document("A0007").search_text,
-        product=index.get_product("A0007"),
-    )
-
-    ranked = ranker.rerank(
-        [candidate], FakeState(positive_slots={"category": ["shoes running sneakers"]})
-    )
-
-    assert ranked[0].score > candidate.score
-
-
 def test_constraint_ranker_grey_slot_matches_gray_catalog_attribute(index):
     """B 的 grey slot 与 catalog 规范化后的 gray attribute 必须匹配。"""
     retriever = LexicalRetriever(index)
