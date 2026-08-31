@@ -44,7 +44,7 @@ _NEGATIVE_PENALTY = 6.0
 _COLOR_BONUS = 1.5
 _BUDGET_PENALTY = 0.5
 _BUDGET_TOLERANCE = 1.15  # 超预算 15% 以内不惩罚，避免把合适商品挤掉
-_QUERY_COVERAGE_BONUS = 12.0
+_QUERY_COVERAGE_BONUS = 20.0
 
 
 def _terms(text: str) -> list[str]:
