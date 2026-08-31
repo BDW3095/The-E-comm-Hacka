@@ -281,6 +281,37 @@ def test_replacement_signals_reset_only_when_the_turn_has_new_content() -> None:
     assert not is_strong_override("I might change later.", parsed, state)
 
 
+def test_replacement_discards_old_contextual_size_and_lexical_feature() -> None:
+    manager, _ = _manager_with_state()
+    manager.update("session-a", "I need a cotton shirt.", 1)
+
+    state = manager.update(
+        "session-a",
+        "Rather than size M and long sleeve, I need size L and a waterproof jacket.",
+        2,
+    )
+
+    assert state.intent_epoch == 1
+    assert state.positive_slots["size"] == ["large"]
+    assert state.positive_slots["feature"] == ["waterproof"]
+    assert "medium" not in state.last_query
+    assert "long sleeve" not in state.last_query
+
+
+def test_replacement_discards_old_budget_before_merging_new_budget() -> None:
+    parsed = LocalParser().parse("Instead of over $50, I need under $100.")
+
+    assert parsed.positive_slots["budget"] == ["max:100"]
+
+
+def test_replacement_discards_old_raw_feature_envelope() -> None:
+    parsed = LocalParser().parse(
+        "Rather than a key requirement is: short sleeve, I need a waterproof jacket."
+    )
+
+    assert parsed.positive_slots["feature"] == ["waterproof"]
+
+
 def test_other_policy_matches_released_boundary_templates_until_exhausted() -> None:
     manager, _ = _manager_with_state()
     policy = QuestionPolicy()
