@@ -164,7 +164,7 @@ class ConstraintRanker:
             bonus = 0.0
             penalty = 0.0
 
-            surface = (cand.search_text or "").lower()
+            surface = normalize_token(cand.search_text or "")
             if query_tokens:
                 surface_tokens = set(_terms(surface))
                 coverage = len(query_tokens & surface_tokens) / len(query_tokens)

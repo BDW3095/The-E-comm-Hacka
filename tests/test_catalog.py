@@ -173,6 +173,20 @@ def test_normalize_token_synonyms():
     assert normalize_token(" COLOUR ") == "color"
     assert normalize_token("Black") == "black"
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("quick-dry", "quick dry"),
+        ("quick_dry", "quick dry"),
+        ("Quick Dry", "quick dry"),
+        ("  quick   dry  ", "quick dry"),
+    ],
+)
+def test_normalize_token_handles_separator_variants(raw_value, expected):
+    assert normalize_token(raw_value) == expected
+
+
+
 
 def test_index_loads_with_empty_fields_null_price_and_duplicate_ids(index):
     assert len(index.documents) == 8  # 9 条输入，1 条重复 ID 被忽略
@@ -240,6 +254,83 @@ def test_extract_attributes_maps_details_keys_without_department_brand_pollution
     assert "mens" not in attrs["brand"]
     assert "adult" not in attrs["brand"]
     assert attrs["brand"] == sorted(attrs["brand"])
+
+
+
+def test_details_values_do_not_cross_attribute_boundaries():
+    product = {
+        "parent_asin": "V1001",
+        "title": "Product",
+        "features": [],
+        "description": [],
+        "categories": [],
+        "details": {
+            "Style": "Black",
+            "Color": "Cotton",
+        },
+        "store": "",
+    }
+
+    attrs = extract_attributes(product)
+
+    assert "black" not in attrs["color"]
+    assert "cotton" not in attrs["material"]
+
+
+def test_store_name_does_not_pollute_structured_attributes():
+    product = {
+        "parent_asin": "V1002",
+        "title": "Hiking Boots",
+        "features": [],
+        "description": [],
+        "categories": ["Shoes"],
+        "details": {},
+        "store": "Black Diamond",
+    }
+
+    attrs = extract_attributes(product)
+
+    assert "black diamond" in attrs["brand"]
+    assert "black" not in attrs["color"]
+
+
+def test_brand_aliases_keep_phrases_and_remove_only_suffixes():
+    product = {
+        "parent_asin": "V1003",
+        "title": "Product",
+        "features": [],
+        "description": [],
+        "categories": [],
+        "details": {
+            "Brand Name": "Nike Inc",
+            "Manufacturer": "The North Face",
+        },
+        "store": "Plain Store",
+    }
+
+    brands = set(extract_attributes(product)["brand"])
+
+    assert {"nike inc", "nike", "the north face", "north face", "plain store"} <= brands
+    assert {"north", "face", "plain", "store"}.isdisjoint(brands)
+
+@pytest.mark.parametrize(
+    "feature_value",
+    ["quick-dry", "quick_dry", "Quick Dry"],
+)
+def test_feature_separator_variants_extract_canonically(feature_value):
+    product = {
+        "parent_asin": "V1004",
+        "title": "Running Shirt",
+        "features": [feature_value],
+        "description": [],
+        "categories": ["Clothing"],
+        "details": {},
+        "store": "",
+    }
+
+    assert "quick dry" in extract_attributes(product)["feature"]
+
+
 
 
 def test_extract_attributes_keeps_store_brand_when_details_missing():
@@ -484,6 +575,38 @@ def test_constraint_ranker_penalizes_only_explicit_upper_budget(index, budget):
     ranked = ranker.rerank(candidates, FakeState(positive_slots={"budget": budget}))
     by_asin = {c.parent_asin: c.score for c in ranked}
     assert by_asin["A0002"] < original["A0002"]
+
+
+def test_feature_separator_variants_receive_rerank_bonus(tmp_path):
+    product = {
+        "parent_asin": "Q0001",
+        "title": "Quick-Dry Running Jacket",
+        "features": ["Quick-Dry fabric"],
+        "description": [],
+        "price": 40.0,
+        "categories": ["Clothing", "Jackets"],
+        "details": {},
+        "average_rating": 4.0,
+        "rating_number": 5,
+        "store": "Runner Brand",
+    }
+
+    separator_index = _build_index(tmp_path, [product])
+    retriever = LexicalRetriever(separator_index)
+    ranker = ConstraintRanker(separator_index)
+
+    candidates = retriever.retrieve("quick dry jacket", limit=10)
+    original = {candidate.parent_asin: candidate.score for candidate in candidates}
+
+    assert "Q0001" in original
+
+    ranked = ranker.rerank(
+        candidates,
+        FakeState(positive_slots={"feature": ["quick_dry"]}),
+    )
+    updated = {candidate.parent_asin: candidate.score for candidate in ranked}
+
+    assert updated["Q0001"] > original["Q0001"]
 
 
 def test_constraint_ranker_feature_positive_bonus(index):
