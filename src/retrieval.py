@@ -44,6 +44,7 @@ _NEGATIVE_PENALTY = 6.0
 _COLOR_BONUS = 1.5
 _BUDGET_PENALTY = 0.5
 _BUDGET_TOLERANCE = 1.15  # 超预算 15% 以内不惩罚，避免把合适商品挤掉
+_QUERY_COVERAGE_BONUS = 12.0
 
 
 def _terms(text: str) -> list[str]:
@@ -148,7 +149,8 @@ class ConstraintRanker:
     def rerank(self, candidates: list[Candidate], state: Any) -> list[Candidate]:
         positive = getattr(state, "positive_slots", None) or {}
         negative = getattr(state, "negative_slots", None) or {}
-        if not positive and not negative:
+        query_tokens = set(_terms(str(getattr(state, "last_query", "") or "")))
+        if not positive and not negative and not query_tokens:
             return sorted(candidates, key=lambda c: (-c.score, c.parent_asin))
 
         budget_values = positive.get("budget") or []
@@ -163,6 +165,10 @@ class ConstraintRanker:
             penalty = 0.0
 
             surface = (cand.search_text or "").lower()
+            if query_tokens:
+                surface_tokens = set(_terms(surface))
+                coverage = len(query_tokens & surface_tokens) / len(query_tokens)
+                bonus += _QUERY_COVERAGE_BONUS * coverage
 
             for key in _ATTR_KEYS_FOR_RANKING:
                 pos_values = positive.get(key)

@@ -19,9 +19,10 @@ from src.retrieval import (
 
 
 class FakeState:
-    def __init__(self, positive_slots=None, negative_slots=None):
+    def __init__(self, positive_slots=None, negative_slots=None, last_query=""):
         self.positive_slots = positive_slots or {}
         self.negative_slots = negative_slots or {}
+        self.last_query = last_query
 
 
 PRODUCTS = [
@@ -505,6 +506,29 @@ def test_constraint_ranker_no_slots_returns_stable_sort(index):
     ranked = ranker.rerank(candidates, FakeState())
     scores = [c.score for c in ranked]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_constraint_ranker_rewards_cumulative_query_coverage(index):
+    ranker = ConstraintRanker(index)
+    weak = Candidate(
+        parent_asin="A0003",
+        score=5.0,
+        search_text="cotton accessory",
+        product=index.get_product("A0003"),
+    )
+    strong = Candidate(
+        parent_asin="A0001",
+        score=1.0,
+        search_text="black cotton hiking shirt",
+        product=index.get_product("A0001"),
+    )
+
+    ranked = ranker.rerank(
+        [weak, strong],
+        FakeState(last_query="black cotton hiking shirt"),
+    )
+
+    assert ranked[0].parent_asin == "A0001"
 
 
 def test_constraint_ranker_ignores_unknown_slot_keys(index):
