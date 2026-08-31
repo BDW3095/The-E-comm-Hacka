@@ -98,6 +98,40 @@ Ablation: commit `8076aaa` additionally introduced category token-overlap rankin
 
 Decision: keep E2. Intent Override misses fall from 20 to 13, total misses fall from 39 to 32, and all non-Override scenario metrics remain unchanged from E1.
 
+## E3 — Cumulative query coverage reranking
+
+- Date: 2026-09-01
+- E3 source commit: `17313bee3f3ec192d5c9b629d81c181fc366b4f8`
+- Branch: `feat/e1-agent-integration` (local; not pushed at recording time)
+- Change: add a label-free query-coverage feature to `ConstraintRanker`. Each candidate receives up to `20.0` points according to the fraction of unique cumulative-query tokens present in its catalog search text. Existing positive/negative attribute rules remain unchanged.
+- Command: `python3 -m evaluator.local_evaluator --output artifacts/e3_weight20_results.json`
+- Repository tests: `81 passed`.
+- Runtime: approximately 61 seconds for 200 public sessions.
+- Network/model usage during evaluation: none; reported tokens: 0.
+- Raw evaluator output: local ignored artifact; not committed.
+
+| Metric | E2 | E3 | Delta |
+|---|---:|---:|---:|
+| Hit Rate@10 | 0.840000 | 0.880000 | +0.040000 |
+| MRR | 0.510145 | 0.554861 | +0.044716 |
+| MTTC | 3.685000 | 3.330000 | -0.355000 |
+| Efficiency | 0.731500 | 0.767000 | +0.035500 |
+| TechnicalScore | **0.719343** | **0.759858** | **+0.040515** |
+
+| Scenario | E2 Hit@10 | E3 Hit@10 | E2 MRR | E3 MRR | E2 MTTC | E3 MTTC |
+|---|---:|---:|---:|---:|---:|---:|
+| Boundary | 0.900000 | 1.000000 | 0.725000 | 0.743452 | 4.000000 | 3.200000 |
+| Browsing | 0.887500 | 0.937500 | 0.536419 | 0.560813 | 3.212500 | 2.775000 |
+| Buying | 0.887500 | 0.925000 | 0.519315 | 0.591682 | 2.900000 | 2.550000 |
+| Intent Override | 0.566667 | 0.566667 | 0.344008 | 0.377937 | 6.933333 | 6.933333 |
+
+Ablations:
+
+- Coverage weight `12.0` at commit `cd3260a` scored `0.757779`; weight `20.0` improved overall and every scenario MRR without reducing any scenario Hit@10, so `20.0` is retained.
+- A strict all-token FTS route was examined against the 24 remaining E3 misses. Only 4 targets reached that route's Top-10, while many existing E3 hits occur at ranks 6–10; the route was not added because its narrow potential gain did not justify displacement risk.
+
+Decision: keep E3. Total misses fall from 32 to 24, rank-1 hits rise from 79 to 88, and all four scenario groups improve or remain stable relative to E2. Production code uses only current user constraints and catalog text; it does not read public labels, sample IDs, evaluator output, or scenario type.
+
 ## Frozen decisions after preflight
 
 - E0 remains the comparison baseline; later runs must be labeled E1, E2, or E3 and must not replace E0.
