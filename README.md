@@ -48,8 +48,52 @@ python -m evaluator.local_evaluator --output artifacts/local_results.json
 ```
 
 The verified unmodified official starter baseline is E0, with `TechnicalScore = 0.106710`.
-The current E4 V4 lexical configuration has `TechnicalScore = 0.759858` on the released local evaluator.
+The current E5 release candidate has `TechnicalScore = 0.759858` on the released local evaluator.
 See [docs/experiment_log.md](docs/experiment_log.md) for environment checks, configs, runtime, and scenario metrics.
+
+## Method and model choice
+
+Muse is an offline-first conversational shopping Agent. It uses `SQLite FTS5`
+lexical retrieval to obtain a Top-200 candidate set, then applies a
+`ConstraintRanker` using accumulated conversation preferences. `StateManager`
+handles incremental preference accumulation and `Intent Override`;
+`QuestionPolicy` uses the released evaluator-compatible
+`other-until-exhausted` strategy.
+
+The submission does not use an external `LLM`, external API, Dense Retrieval,
+or model weights. `SEMANTIC_ENABLED=False`.
+
+## Runtime, token usage, and cost
+
+On the released local evaluator, the 200-session E5 evaluation completed in
+approximately 33.217 seconds on local macOS / Python 3.11 development
+hardware. The Agent reports `0` prompt tokens and `0` completion tokens, uses
+no network connection, and has an estimated external model/API cost of `$0`.
+
+## Limitations and future improvements
+
+- The current system is optimized and validated against the released
+  template-based evaluator; more diverse natural-language paraphrases may
+  require a stronger semantic parser.
+- `Intent Override` remains the weakest released scenario and is the main
+  source of remaining retrieval misses.
+- The current P0/P1 pipeline is lexical. `P2-Dense + RRF` is future work and
+  should only be evaluated after runtime, package-size, and model-weight
+  constraints are confirmed.
+- Because one `parent_asin` can represent multiple SKU variants, color uses
+  `positive-evidence-only`: an explicit matching color adds evidence, while a
+  non-matching color is not treated as a hard conflict.
+
+## Team contributions
+
+- ZHU YIHAN: catalog indexing, `SQLite FTS5` retrieval,
+  `ConstraintRanker`, and recommendation validation.
+- DUAN YUGUANG: conversation state, intent parsing, `Intent Override`,
+  and `QuestionPolicy`.
+- WEN BIDONG: evaluator analysis, regression comparison, and
+  experiment validation.
+- WANG CHEN: shared contracts, Agent integration, fallback
+  reliability, release readiness, and submission documentation.
 
 ## Repository layout
 
