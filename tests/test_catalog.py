@@ -10,6 +10,7 @@ import json
 import pytest
 
 from src.catalog import CatalogIndex, extract_attributes, flatten_text, normalize_token
+from src.config import RankingConfig
 from src.retrieval import (
     ConstraintRanker,
     LexicalRetriever,
@@ -652,6 +653,95 @@ def test_constraint_ranker_rewards_cumulative_query_coverage(index):
     )
 
     assert ranked[0].parent_asin == "A0001"
+
+
+def test_ranking_config_defaults_preserve_existing_score_formula(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+
+    ranked = ConstraintRanker(index).rerank([candidate], state)
+
+    # 3.0 BM25 + 20.0 coverage + 2.0 material + 1.5 color.
+    assert ranked[0].score == pytest.approx(26.5)
+
+
+def test_ranking_config_can_disable_only_query_coverage(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+    config = RankingConfig(query_coverage_enabled=False)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(6.5)
+
+
+def test_ranking_config_custom_coverage_weight_is_applied(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+    config = RankingConfig(query_coverage_weight=4.0)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(10.5)
+
+
+def test_ranking_config_custom_negative_penalty_is_applied(index):
+    candidate = Candidate(
+        parent_asin="A0002",
+        score=10.0,
+        search_text="red leather jacket",
+        product=index.get_product("A0002"),
+    )
+    state = FakeState(negative_slots={"material": ["leather"]})
+    config = RankingConfig(negative_penalty=2.0)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(8.0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"color_conflict_mode": "conservative"}, "color_conflict_mode"),
+        ({"positive_bonus": -1.0}, "positive_bonus"),
+        ({"negative_penalty": float("nan")}, "negative_penalty"),
+        ({"query_coverage_weight": float("inf")}, "query_coverage_weight"),
+        ({"budget_tolerance": 0.99}, "budget_tolerance"),
+    ],
+)
+def test_ranking_config_rejects_invalid_numeric_or_mode_values(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        RankingConfig(**overrides)
+
+
+def test_ranking_config_requires_boolean_coverage_flag():
+    with pytest.raises(TypeError, match="query_coverage_enabled"):
+        RankingConfig(query_coverage_enabled=1)
 
 
 def test_constraint_ranker_ignores_unknown_slot_keys(index):

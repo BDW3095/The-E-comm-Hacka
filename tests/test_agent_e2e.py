@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.agent import Agent as SourceAgent
+from src.config import RankingConfig
 from starter.agent import Agent as StarterAgent
 
 
@@ -28,6 +29,30 @@ def _write_catalog(path) -> None:
 
 def test_starter_reexports_source_agent() -> None:
     assert StarterAgent is SourceAgent
+
+
+def test_agent_injects_custom_ranking_config(tmp_path) -> None:
+    catalog_path = tmp_path / "catalog.jsonl"
+    _write_catalog(catalog_path)
+    ranking_config = RankingConfig(
+        query_coverage_enabled=False,
+        negative_penalty=3.0,
+    )
+
+    agent = StarterAgent(catalog_path, ranking_config=ranking_config)
+
+    assert agent.ranking_config is ranking_config
+    assert agent._ranker is not None
+    assert agent._ranker._config is ranking_config
+
+
+def test_official_single_argument_constructor_uses_default_ranking_config(tmp_path) -> None:
+    catalog_path = tmp_path / "catalog.jsonl"
+    _write_catalog(catalog_path)
+
+    agent = StarterAgent(catalog_path)
+
+    assert agent.ranking_config == RankingConfig()
 
 
 def test_reset_creates_isolated_session_state(tmp_path) -> None:
