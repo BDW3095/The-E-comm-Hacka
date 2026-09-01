@@ -128,6 +128,8 @@ def test_parser_prioritises_explicit_category_template_over_fallback_terms() -> 
 
     parsed = parser.parse("I'm looking for shirts, but I'm still exploring.")
     assert parsed.positive_slots["category"] == ["shirts"]
+    parsed = parser.parse("I'm looking for accessories belts, but I'm still exploring.")
+    assert parsed.positive_slots["category"] == ["accessories belts"]
 
     for message in ("bottle cap", "phone ring", "camera bag", "jewelry accessories"):
         assert "category" not in parser.parse(message).positive_slots
@@ -231,10 +233,28 @@ def test_explicit_override_resets_old_slots_question_records_and_exhaustion() ->
 
     assert state.intent_epoch == 1
     assert state.positive_slots["material"] == ["leather"]
+    assert state.positive_slots["category"] == ["boots"]
+    assert "shirt" not in state.positive_slots["category"]
     assert "black" not in state.positive_slots.get("color", [])
     assert state.asked_specific_attributes == set()
     assert state.no_preference_attributes == set()
     assert not state.other_exhausted
+
+
+def test_preference_override_preserves_existing_category_when_no_new_category_is_named() -> None:
+    manager, _ = _manager_with_state()
+    manager.update("session-a", "I'm looking for loafers, but I'm still exploring.", 1)
+
+    state = manager.update(
+        "session-a",
+        "Actually, ignore my earlier preference. What I need is: leather.",
+        2,
+    )
+
+    assert state.intent_epoch == 1
+    assert state.positive_slots["category"] == ["loafers"]
+    assert state.positive_slots["material"] == ["leather"]
+    assert state.last_query == "loafers leather"
 
 
 def test_replacement_signals_reset_only_when_the_turn_has_new_content() -> None:
@@ -259,6 +279,37 @@ def test_replacement_signals_reset_only_when_the_turn_has_new_content() -> None:
     assert not is_strong_override("I would rather browse.", parsed, state)
     parsed = manager.parser.parse("I might change later.")
     assert not is_strong_override("I might change later.", parsed, state)
+
+
+def test_replacement_discards_old_contextual_size_and_lexical_feature() -> None:
+    manager, _ = _manager_with_state()
+    manager.update("session-a", "I need a cotton shirt.", 1)
+
+    state = manager.update(
+        "session-a",
+        "Rather than size M and long sleeve, I need size L and a waterproof jacket.",
+        2,
+    )
+
+    assert state.intent_epoch == 1
+    assert state.positive_slots["size"] == ["large"]
+    assert state.positive_slots["feature"] == ["waterproof"]
+    assert "medium" not in state.last_query
+    assert "long sleeve" not in state.last_query
+
+
+def test_replacement_discards_old_budget_before_merging_new_budget() -> None:
+    parsed = LocalParser().parse("Instead of over $50, I need under $100.")
+
+    assert parsed.positive_slots["budget"] == ["max:100"]
+
+
+def test_replacement_discards_old_raw_feature_envelope() -> None:
+    parsed = LocalParser().parse(
+        "Rather than a key requirement is: short sleeve, I need a waterproof jacket."
+    )
+
+    assert parsed.positive_slots["feature"] == ["waterproof"]
 
 
 def test_other_policy_matches_released_boundary_templates_until_exhausted() -> None:
@@ -368,6 +419,26 @@ def test_information_gain_reads_slots_candidates_and_hyphenated_catalog_text() -
     ]
 
     assert policy.choose(state, candidates, turn=1) == "feature"
+
+
+def test_information_gain_reads_real_slots_candidate_fields() -> None:
+    """Shared Candidate uses slots=True and therefore has no __dict__."""
+    manager, state = _manager_with_state()
+    policy = QuestionPolicy(
+        QuestionPolicyConfig(
+            mode="information_gain",
+            final_turn=10,
+            askable_attributes=("feature", "use_case"),
+        )
+    )
+    candidates = [
+        Candidate("A1", 1.0, "running shoes", {"title": "Running shoes"}),
+        Candidate("A2", 0.9, "hiking boots", {"title": "Hiking boots"}),
+    ]
+
+    # use_case has observed coverage/diversity; feature has none. A fixed-order
+    # fallback to feature would prove that Candidate fields were not read.
+    assert policy.choose(state, candidates, turn=1) == "use_case"
 
 
 def test_policy_outputs_are_always_official_values_or_none() -> None:

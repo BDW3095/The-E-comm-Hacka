@@ -45,9 +45,10 @@ _SYNONYMS = {
 
 
 def normalize_token(text: object) -> str:
-    t = str(text).strip().lower()
+    t = str(text).strip().casefold()
+    t = re.sub(r"[-_]+", " ", t)
+    t = re.sub(r"\s+", " ", t)
     return _SYNONYMS.get(t, t)
-
 
 # ---------- 属性抽取词典（确定性正则，不依赖模型） ----------
 
@@ -93,17 +94,27 @@ _DETAIL_KEYS_BY_ATTRIBUTE = {
     "feature": {"special feature", "special features"},
 }
 _BRAND_DETAIL_KEYS = {"brand", "brand name", "manufacturer"}
-_BRAND_ALIAS_STOPWORDS = {
-    "and", "co", "company", "corp", "corporation", "inc", "incorporated",
-    "ltd", "llc", "limited", "of", "the",
+_BRAND_LEGAL_SUFFIXES = {
+    "co", "company", "corp", "corporation", "inc", "incorporated",
+    "ltd", "llc", "limited",
 }
 
-_MATERIAL_RE = re.compile(r"\b(" + "|".join(_MATERIALS) + r")\b", re.I)
-_COLOR_RE = re.compile(r"\b(" + "|".join(_COLORS) + r")\b", re.I)
-_SIZE_RE = re.compile(r"\b(" + "|".join(re.escape(s) for s in _SIZES) + r")\b", re.I)
-_STYLE_RE = re.compile(r"\b(" + "|".join(re.escape(s) for s in _STYLES) + r")\b", re.I)
-_USE_CASE_RE = re.compile(r"\b(" + "|".join(_USE_CASES) + r")\b", re.I)
-_FEATURE_RE = re.compile(r"\b(" + "|".join(re.escape(f) for f in _FEATURES) + r")\b", re.I)
+def _compile_vocabulary(values: tuple[str, ...]) -> re.Pattern[str]:
+    """Compile canonical phrases; longest-first keeps multi-word matches stable."""
+    alternatives = sorted(
+        {re.escape(normalize_token(value)) for value in values},
+        key=len,
+        reverse=True,
+    )
+    return re.compile(r"\b(" + "|".join(alternatives) + r")\b", re.I)
+
+
+_MATERIAL_RE = _compile_vocabulary(_MATERIALS)
+_COLOR_RE = _compile_vocabulary(_COLORS)
+_SIZE_RE = _compile_vocabulary(_SIZES)
+_STYLE_RE = _compile_vocabulary(_STYLES)
+_USE_CASE_RE = _compile_vocabulary(_USE_CASES)
+_FEATURE_RE = _compile_vocabulary(_FEATURES)
 
 
 def extract_attributes(product: dict) -> dict[str, list[str]]:
@@ -117,23 +128,60 @@ def extract_attributes(product: dict) -> dict[str, list[str]]:
     if isinstance(details, dict):
         normalized_details = [(str(key).strip().casefold(), value) for key, value in details.items()]
 
-    structured_detail_keys = set().union(*_DETAIL_KEYS_BY_ATTRIBUTE.values())
-    details_text = " ".join(
-        flatten_text(value)
-        for key, value in normalized_details
-        if key in structured_detail_keys
-    )
-    strong_text = " ".join(
-        flatten_text(product.get(f)) for f in ("title", "features", "categories", "store")
-    )
-    strong_text = f"{strong_text} {details_text}".strip()
+    # title/features/categories 是可信但非结构化的商品文本：
+    # 它们可以同时被各 attribute 的 regex 扫描。
+    # store 不放在这里，因为店名 "Black Diamond" 不能被误判成 color=black。
+    common_text = normalize_token(" ".join(
+        flatten_text(product.get(field))
+        for field in ("title", "features", "categories")
+    ))
+
+    # details 是半结构化字段：每个 value 只能交给自己声明的 attribute。
+    # 例如 details["Color"] 只会进入 color extraction，
+    # 不会再被 material/style 等 extraction 扫描。
+    detail_text_by_attribute = {
+        attribute: normalize_token(" ".join(
+            flatten_text(value)
+            for key, value in normalized_details
+            if key in allowed_keys
+        ))
+        for attribute, allowed_keys in _DETAIL_KEYS_BY_ATTRIBUTE.items()
+    }
+
+    def text_for(attribute: str) -> str:
+        """返回某个 attribute 可安全扫描的文本。"""
+        return " ".join(
+            part
+            for part in (common_text, detail_text_by_attribute.get(attribute, ""))
+            if part
+        )
+
     attrs: dict[str, list[str]] = {
-        "material": sorted({normalize_token(m) for m in _MATERIAL_RE.findall(strong_text)}),
-        "color": sorted({normalize_token(c) for c in _COLOR_RE.findall(strong_text)}),
-        "size": sorted({normalize_token(s) for s in _SIZE_RE.findall(strong_text)}),
-        "style": sorted({normalize_token(s) for s in _STYLE_RE.findall(strong_text)}),
-        "use_case": sorted({normalize_token(u) for u in _USE_CASE_RE.findall(strong_text)}),
-        "feature": sorted({normalize_token(ft) for ft in _FEATURE_RE.findall(strong_text)}),
+        "material": sorted({
+            normalize_token(value)
+            for value in _MATERIAL_RE.findall(text_for("material"))
+        }),
+        "color": sorted({
+            normalize_token(value)
+            for value in _COLOR_RE.findall(text_for("color"))
+        }),
+        "size": sorted({
+            normalize_token(value)
+            for value in _SIZE_RE.findall(text_for("size"))
+        }),
+        "style": sorted({
+            normalize_token(value)
+            for value in _STYLE_RE.findall(text_for("style"))
+        }),
+        # 当前没有 use_case 对应的 details key，所以只扫描 common_text。
+        "use_case": sorted({
+            normalize_token(value)
+            for value in _USE_CASE_RE.findall(common_text)
+        }),
+        "feature": sorted({
+            normalize_token(value)
+            for value in _FEATURE_RE.findall(text_for("feature"))
+        }),
         "brand": [],
     }
 
@@ -144,9 +192,14 @@ def extract_attributes(product: dict) -> dict[str, list[str]]:
         attrs["brand"].append(phrase)
         # Keep the complete phrase (e.g. "nike inc") and useful word aliases
         # (e.g. "nike") so B's brand slot can match either representation.
-        for token in re.findall(r"[a-z0-9]+", phrase):
-            if len(token) >= 3 and token not in _BRAND_ALIAS_STOPWORDS:
-                attrs["brand"].append(token)
+        tokens = re.findall(r"[a-z0-9]+(?:'[a-z0-9]+)?", phrase)
+        while tokens and tokens[-1] in _BRAND_LEGAL_SUFFIXES:
+            tokens.pop()
+        if tokens and tokens[0] == "the":
+            tokens = tokens[1:]
+        alias = " ".join(tokens).strip()
+        if alias and alias != phrase:
+            attrs["brand"].append(alias)
 
     store = product.get("store")
     if store:

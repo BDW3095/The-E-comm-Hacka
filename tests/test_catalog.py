@@ -10,6 +10,7 @@ import json
 import pytest
 
 from src.catalog import CatalogIndex, extract_attributes, flatten_text, normalize_token
+from src.config import RankingConfig
 from src.retrieval import (
     ConstraintRanker,
     LexicalRetriever,
@@ -19,9 +20,10 @@ from src.retrieval import (
 
 
 class FakeState:
-    def __init__(self, positive_slots=None, negative_slots=None):
+    def __init__(self, positive_slots=None, negative_slots=None, last_query=""):
         self.positive_slots = positive_slots or {}
         self.negative_slots = negative_slots or {}
+        self.last_query = last_query
 
 
 PRODUCTS = [
@@ -172,6 +174,20 @@ def test_normalize_token_synonyms():
     assert normalize_token(" COLOUR ") == "color"
     assert normalize_token("Black") == "black"
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("quick-dry", "quick dry"),
+        ("quick_dry", "quick dry"),
+        ("Quick Dry", "quick dry"),
+        ("  quick   dry  ", "quick dry"),
+    ],
+)
+def test_normalize_token_handles_separator_variants(raw_value, expected):
+    assert normalize_token(raw_value) == expected
+
+
+
 
 def test_index_loads_with_empty_fields_null_price_and_duplicate_ids(index):
     assert len(index.documents) == 8  # 9 条输入，1 条重复 ID 被忽略
@@ -239,6 +255,83 @@ def test_extract_attributes_maps_details_keys_without_department_brand_pollution
     assert "mens" not in attrs["brand"]
     assert "adult" not in attrs["brand"]
     assert attrs["brand"] == sorted(attrs["brand"])
+
+
+
+def test_details_values_do_not_cross_attribute_boundaries():
+    product = {
+        "parent_asin": "V1001",
+        "title": "Product",
+        "features": [],
+        "description": [],
+        "categories": [],
+        "details": {
+            "Style": "Black",
+            "Color": "Cotton",
+        },
+        "store": "",
+    }
+
+    attrs = extract_attributes(product)
+
+    assert "black" not in attrs["color"]
+    assert "cotton" not in attrs["material"]
+
+
+def test_store_name_does_not_pollute_structured_attributes():
+    product = {
+        "parent_asin": "V1002",
+        "title": "Hiking Boots",
+        "features": [],
+        "description": [],
+        "categories": ["Shoes"],
+        "details": {},
+        "store": "Black Diamond",
+    }
+
+    attrs = extract_attributes(product)
+
+    assert "black diamond" in attrs["brand"]
+    assert "black" not in attrs["color"]
+
+
+def test_brand_aliases_keep_phrases_and_remove_only_suffixes():
+    product = {
+        "parent_asin": "V1003",
+        "title": "Product",
+        "features": [],
+        "description": [],
+        "categories": [],
+        "details": {
+            "Brand Name": "Nike Inc",
+            "Manufacturer": "The North Face",
+        },
+        "store": "Plain Store",
+    }
+
+    brands = set(extract_attributes(product)["brand"])
+
+    assert {"nike inc", "nike", "the north face", "north face", "plain store"} <= brands
+    assert {"north", "face", "plain", "store"}.isdisjoint(brands)
+
+@pytest.mark.parametrize(
+    "feature_value",
+    ["quick-dry", "quick_dry", "Quick Dry"],
+)
+def test_feature_separator_variants_extract_canonically(feature_value):
+    product = {
+        "parent_asin": "V1004",
+        "title": "Running Shirt",
+        "features": [feature_value],
+        "description": [],
+        "categories": ["Clothing"],
+        "details": {},
+        "store": "",
+    }
+
+    assert "quick dry" in extract_attributes(product)["feature"]
+
+
 
 
 def test_extract_attributes_keeps_store_brand_when_details_missing():
@@ -458,6 +551,65 @@ def test_constraint_ranker_null_price_not_penalized(index):
     assert by_asin["A0003"] == pytest.approx(original["A0003"])
 
 
+@pytest.mark.parametrize("budget", [["min:25"], ["target:50"]])
+def test_constraint_ranker_does_not_treat_non_max_budget_as_ceiling(index, budget):
+    """B preserves min/target semantics; A must not reinterpret either as max."""
+    retriever = LexicalRetriever(index)
+    ranker = ConstraintRanker(index)
+    candidates = retriever.retrieve("red leather jacket", limit=10)
+    original = {c.parent_asin: c.score for c in candidates}
+    assert "A0002" in original, "precondition failed: A0002 没有被召回"
+
+    ranked = ranker.rerank(candidates, FakeState(positive_slots={"budget": budget}))
+    by_asin = {c.parent_asin: c.score for c in ranked}
+    assert by_asin["A0002"] == pytest.approx(original["A0002"])
+
+
+@pytest.mark.parametrize("budget", [["max:40"], ["under $40"]])
+def test_constraint_ranker_penalizes_only_explicit_upper_budget(index, budget):
+    retriever = LexicalRetriever(index)
+    ranker = ConstraintRanker(index)
+    candidates = retriever.retrieve("red leather jacket", limit=10)
+    original = {c.parent_asin: c.score for c in candidates}
+    assert "A0002" in original, "precondition failed: A0002 没有被召回"
+
+    ranked = ranker.rerank(candidates, FakeState(positive_slots={"budget": budget}))
+    by_asin = {c.parent_asin: c.score for c in ranked}
+    assert by_asin["A0002"] < original["A0002"]
+
+
+def test_feature_separator_variants_receive_rerank_bonus(tmp_path):
+    product = {
+        "parent_asin": "Q0001",
+        "title": "Quick-Dry Running Jacket",
+        "features": ["Quick-Dry fabric"],
+        "description": [],
+        "price": 40.0,
+        "categories": ["Clothing", "Jackets"],
+        "details": {},
+        "average_rating": 4.0,
+        "rating_number": 5,
+        "store": "Runner Brand",
+    }
+
+    separator_index = _build_index(tmp_path, [product])
+    retriever = LexicalRetriever(separator_index)
+    ranker = ConstraintRanker(separator_index)
+
+    candidates = retriever.retrieve("quick dry jacket", limit=10)
+    original = {candidate.parent_asin: candidate.score for candidate in candidates}
+
+    assert "Q0001" in original
+
+    ranked = ranker.rerank(
+        candidates,
+        FakeState(positive_slots={"feature": ["quick_dry"]}),
+    )
+    updated = {candidate.parent_asin: candidate.score for candidate in ranked}
+
+    assert updated["Q0001"] > original["Q0001"]
+
+
 def test_constraint_ranker_feature_positive_bonus(index):
     """回归测试：修复前 attrs 字典里没有 'feature' key，这个测试之前会失败（现在应该通过）。"""
     retriever = LexicalRetriever(index)
@@ -478,6 +630,118 @@ def test_constraint_ranker_no_slots_returns_stable_sort(index):
     ranked = ranker.rerank(candidates, FakeState())
     scores = [c.score for c in ranked]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_constraint_ranker_rewards_cumulative_query_coverage(index):
+    ranker = ConstraintRanker(index)
+    weak = Candidate(
+        parent_asin="A0003",
+        score=5.0,
+        search_text="cotton accessory",
+        product=index.get_product("A0003"),
+    )
+    strong = Candidate(
+        parent_asin="A0001",
+        score=1.0,
+        search_text="black cotton hiking shirt",
+        product=index.get_product("A0001"),
+    )
+
+    ranked = ranker.rerank(
+        [weak, strong],
+        FakeState(last_query="black cotton hiking shirt"),
+    )
+
+    assert ranked[0].parent_asin == "A0001"
+
+
+def test_ranking_config_defaults_preserve_existing_score_formula(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+
+    ranked = ConstraintRanker(index).rerank([candidate], state)
+
+    # 3.0 BM25 + 20.0 coverage + 2.0 material + 1.5 color.
+    assert ranked[0].score == pytest.approx(26.5)
+
+
+def test_ranking_config_can_disable_only_query_coverage(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+    config = RankingConfig(query_coverage_enabled=False)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(6.5)
+
+
+def test_ranking_config_custom_coverage_weight_is_applied(index):
+    candidate = Candidate(
+        parent_asin="A0001",
+        score=3.0,
+        search_text="black cotton",
+        product=index.get_product("A0001"),
+    )
+    state = FakeState(
+        positive_slots={"material": ["cotton"], "color": ["black"]},
+        last_query="black cotton",
+    )
+    config = RankingConfig(query_coverage_weight=4.0)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(10.5)
+
+
+def test_ranking_config_custom_negative_penalty_is_applied(index):
+    candidate = Candidate(
+        parent_asin="A0002",
+        score=10.0,
+        search_text="red leather jacket",
+        product=index.get_product("A0002"),
+    )
+    state = FakeState(negative_slots={"material": ["leather"]})
+    config = RankingConfig(negative_penalty=2.0)
+
+    ranked = ConstraintRanker(index, ranking_config=config).rerank([candidate], state)
+
+    assert ranked[0].score == pytest.approx(8.0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"color_conflict_mode": "conservative"}, "color_conflict_mode"),
+        ({"positive_bonus": -1.0}, "positive_bonus"),
+        ({"negative_penalty": float("nan")}, "negative_penalty"),
+        ({"query_coverage_weight": float("inf")}, "query_coverage_weight"),
+        ({"budget_tolerance": 0.99}, "budget_tolerance"),
+    ],
+)
+def test_ranking_config_rejects_invalid_numeric_or_mode_values(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        RankingConfig(**overrides)
+
+
+def test_ranking_config_requires_boolean_coverage_flag():
+    with pytest.raises(TypeError, match="query_coverage_enabled"):
+        RankingConfig(query_coverage_enabled=1)
 
 
 def test_constraint_ranker_ignores_unknown_slot_keys(index):

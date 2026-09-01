@@ -290,9 +290,13 @@ class LocalParser:
         replaced_value_scopes = self._replaced_value_scopes(lowered)
 
         self._extract_known_values(lowered, positive, negative, negative_scopes, replaced_value_scopes)
-        self._extract_contextual_sizes(lowered, positive, negative, negative_scopes)
-        self._extract_lexical_only_features(lowered, positive, negative, negative_scopes)
-        self._extract_budget(lowered, positive)
+        self._extract_contextual_sizes(
+            lowered, positive, negative, negative_scopes, replaced_value_scopes
+        )
+        self._extract_lexical_only_features(
+            lowered, positive, negative, negative_scopes, replaced_value_scopes
+        )
+        self._extract_budget(lowered, positive, replaced_value_scopes)
         self._extract_brand(lowered, positive, negative, negative_scopes, replaced_value_scopes)
         self._extract_category(
             lowered,
@@ -301,7 +305,9 @@ class LocalParser:
             negative_scopes,
             replaced_value_scopes,
         )
-        self._extract_explicit_feature(lowered, positive, negative, negative_scopes)
+        self._extract_explicit_feature(
+            lowered, positive, negative, negative_scopes, replaced_value_scopes
+        )
 
         normalised_query = self._query_from_slots(positive)
         return self._parsed(dict(positive), dict(negative), normalised_query)
@@ -374,6 +380,7 @@ class LocalParser:
         positive: defaultdict[str, list[str]],
         negative: defaultdict[str, list[str]],
         negative_scopes: list[tuple[int, int]],
+        replaced_value_scopes: list[tuple[int, int]],
     ) -> None:
         """Parse S/M/L and ambiguous size words only with explicit size context."""
 
@@ -382,6 +389,8 @@ class LocalParser:
                 code = match.group("code").lower()
                 value = _SIZE_CODE_MAP[code]
                 start, end = match.span("code")
+                if _match_in_negative_scope(start, end, replaced_value_scopes):
+                    continue
                 destination = negative if _match_in_negative_scope(
                     start, end, negative_scopes
                 ) else positive
@@ -390,6 +399,8 @@ class LocalParser:
         for match in _SIZE_CONTEXT_VALUE_RE.finditer(text):
             value = match.group("value").lower()
             start, end = match.span("value")
+            if _match_in_negative_scope(start, end, replaced_value_scopes):
+                continue
             destination = negative if _match_in_negative_scope(
                 start, end, negative_scopes
             ) else positive
@@ -399,6 +410,8 @@ class LocalParser:
             value = (match.group("value") or match.group("reverse")).lower()
             group_name = "value" if match.group("value") else "reverse"
             start, end = match.span(group_name)
+            if _match_in_negative_scope(start, end, replaced_value_scopes):
+                continue
             destination = negative if _match_in_negative_scope(
                 start, end, negative_scopes
             ) else positive
@@ -410,11 +423,16 @@ class LocalParser:
         positive: defaultdict[str, list[str]],
         negative: defaultdict[str, list[str]],
         negative_scopes: list[tuple[int, int]],
+        replaced_value_scopes: list[tuple[int, int]],
     ) -> None:
         """Keep sleeve length and warmth lexical without promoting them to style."""
 
         for value in ("long sleeve", "short sleeve", "sleeveless"):
             for match in _term_pattern(value).finditer(text):
+                if _match_in_negative_scope(
+                    match.start(), match.end(), replaced_value_scopes
+                ):
+                    continue
                 destination = negative if _match_in_negative_scope(
                     match.start(), match.end(), negative_scopes
                 ) else positive
@@ -422,12 +440,21 @@ class LocalParser:
 
         warm_pattern = re.compile(r"\b(?:keep(?:s)?|keeping|stay(?:s)?)\s+(?:you\s+)?warm\b", re.I)
         for match in warm_pattern.finditer(text):
+            if _match_in_negative_scope(
+                match.start(), match.end(), replaced_value_scopes
+            ):
+                continue
             destination = negative if _match_in_negative_scope(
                 match.start(), match.end(), negative_scopes
             ) else positive
             _append_unique(destination["feature"], ["warm"])
 
-    def _extract_budget(self, text: str, positive: defaultdict[str, list[str]]) -> None:
+    def _extract_budget(
+        self,
+        text: str,
+        positive: defaultdict[str, list[str]],
+        replaced_value_scopes: list[tuple[int, int]],
+    ) -> None:
         number = r"\$?\s*(\d+(?:\.\d{1,2})?)"
         patterns = (
             ("max", re.compile(r"\b(?:under|below|less\s+than|up\s+to|at\s+most|<=)\s*" + number, re.I)),
@@ -436,6 +463,10 @@ class LocalParser:
         )
         for kind, pattern in patterns:
             for match in pattern.finditer(text):
+                if _match_in_negative_scope(
+                    match.start(), match.end(), replaced_value_scopes
+                ):
+                    continue
                 value = float(match.group(1))
                 rendered = f"{value:g}"
                 _append_unique(positive["budget"], [f"{kind}:{rendered}"])
@@ -468,7 +499,7 @@ class LocalParser:
         # The evaluator starts with "I'm looking for <coarse category>".  Keep
         # that explicit category wording as the primary category signal.
         match = re.search(
-            r"\b(?:i'?m\s+)?looking\s+for\s+(?:a|an|some)?\s*(.+?)"
+            r"\b(?:i'?m\s+)?looking\s+for\s+(?:(?:an|a|some)\s+)?(.+?)"
             r"(?=\s*(?:,|\.|;|but\b|a\s+key\s+requirement\b|$))",
             text,
             re.IGNORECASE,
@@ -500,6 +531,7 @@ class LocalParser:
         positive: defaultdict[str, list[str]],
         negative: defaultdict[str, list[str]],
         negative_scopes: list[tuple[int, int]],
+        replaced_value_scopes: list[tuple[int, int]],
     ) -> None:
         pattern = re.compile(
             r"\b(?:a\s+key\s+requirement|what\s+i\s+need|what\s+matters)\s+is\s*:\s*([^.]*)",
@@ -515,6 +547,15 @@ class LocalParser:
                 if not value:
                     continue
                 value_start = match.start(1) + match.group(1).find(raw_value)
+                # A raw feature envelope can begin on the replacement's old
+                # side and extend past the comma into new wording.  Do not
+                # retain that mixed envelope; known new constraints are
+                # extracted independently by the controlled vocabularies.
+                if any(
+                    scope_start <= value_start < scope_end
+                    for scope_start, scope_end in replaced_value_scopes
+                ):
+                    continue
                 destination = negative if _match_in_negative_scope(
                     value_start, value_start + len(raw_value), negative_scopes
                 ) else positive
@@ -596,7 +637,19 @@ class StateManager:
         boundary = self.parser.detect_boundary(message)
         should_reset = boundary is None and is_strong_override(message, parsed, state)
         if should_reset:
+            # The released override template replaces an earlier preference,
+            # not the shopping task's product family.  Preserve the existing
+            # category only when the replacement message does not name a new
+            # positive or negative category of its own.
+            parsed_positive = getattr(parsed, "positive_slots", {}) or {}
+            parsed_negative = getattr(parsed, "negative_slots", {}) or {}
+            preserve_category = not (
+                parsed_positive.get("category") or parsed_negative.get("category")
+            )
+            prior_category = list(state.positive_slots.get("category", []))
             self._reset_current_intent(state)
+            if preserve_category and prior_category:
+                state.positive_slots["category"] = prior_category
             try:
                 parsed.is_override = True
             except (AttributeError, TypeError):

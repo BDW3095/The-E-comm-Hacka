@@ -149,10 +149,19 @@ class QuestionPolicy:
     def _attribute_values(candidate: object, attribute: str) -> Iterable[object]:
         if isinstance(candidate, dict):
             mapping: Any = candidate
+            product = mapping.get("product", {})
+            search_text_value = mapping.get("search_text", "")
         else:
-            mapping = getattr(candidate, "__dict__", {})
+            # Shared Candidate is a slots dataclass and has no ``__dict__``.
+            # Read its public contract fields directly instead of silently
+            # replacing it with an empty mapping.
+            mapping = {}
+            product = getattr(candidate, "product", {})
+            search_text_value = getattr(candidate, "search_text", "")
+            direct_attributes = getattr(candidate, "attributes", None)
+            if isinstance(direct_attributes, dict):
+                mapping = {"attributes": direct_attributes}
 
-        product = mapping.get("product", {}) if isinstance(mapping, dict) else getattr(candidate, "product", {})
         for source in (mapping, product):
             if not isinstance(source, dict):
                 continue
@@ -171,7 +180,7 @@ class QuestionPolicy:
         search_text = " ".join(
             str(value or "")
             for value in (
-                mapping.get("search_text", "") if isinstance(mapping, dict) else getattr(candidate, "search_text", ""),
+                search_text_value,
                 product.get("title", "") if isinstance(product, dict) else "",
                 product.get("features", "") if isinstance(product, dict) else "",
                 product.get("details", "") if isinstance(product, dict) else "",

@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from src.catalog import CatalogIndex, normalize_token
-
+from src.config import DEFAULT_RANKING_CONFIG, RankingConfig
 from src.types import Candidate
 
 
@@ -39,11 +39,6 @@ _ATTR_KEYS_FOR_RANKING = ("category", "material", "color", "brand", "size", "sty
 # feature 是开放词表兜底分类，extract_attributes 的固定词典必然覆盖不全（比如没收录进词典的
 # 具体功能描述），所以命中判断额外做一次 search_text 子串匹配兜底，不完全依赖词典命中。
 _SUBSTRING_FALLBACK_KEYS = {"feature"}
-_POSITIVE_BONUS = 2.0
-_NEGATIVE_PENALTY = 6.0
-_COLOR_BONUS = 1.5
-_BUDGET_PENALTY = 0.5
-_BUDGET_TOLERANCE = 1.15  # 超预算 15% 以内不惩罚，避免把合适商品挤掉
 
 
 def _terms(text: str) -> list[str]:
@@ -64,15 +59,36 @@ def compile_positive_query(query: str) -> str:
 
 
 def _budget_ceiling(values: list) -> float | None:
-    """兼容两种 budget 表示：结构化 {"min":..,"max":..} 或自然语言字符串（如 "under $30"）。"""
+    """Return only an explicit upper bound from B's budget representation.
+
+    ``min:`` and ``target:`` carry different semantics and must never be
+    reinterpreted as a maximum.  Natural-language strings are accepted only
+    when they contain an unambiguous upper-bound phrase such as ``under`` or
+    ``at most``.
+    """
     ceiling: float | None = None
     for v in values:
         if isinstance(v, dict):
             hi = v.get("max")
-            if isinstance(hi, (int, float)):
-                ceiling = hi if ceiling is None else min(ceiling, hi)
+            if isinstance(hi, (int, float)) and not isinstance(hi, bool):
+                numeric_hi = float(hi)
+                ceiling = numeric_hi if ceiling is None else min(ceiling, numeric_hi)
             continue
-        numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", str(v))]
+
+        text = str(v).strip().lower()
+        kind, separator, _amount = text.partition(":")
+        if separator and kind in {"min", "target"}:
+            continue
+        has_upper_semantics = kind == "max" or bool(
+            re.search(
+                r"(?:<=|\bunder\b|\bbelow\b|\bless\s+than\b|\bup\s+to\b|"
+                r"\bat\s+most\b|\bno\s+more\s+than\b|\bmax(?:imum)?\b)",
+                text,
+            )
+        )
+        if not has_upper_semantics:
+            continue
+        numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", text)]
         if numbers:
             hi = max(numbers)
             ceiling = hi if ceiling is None else min(ceiling, hi)
@@ -121,13 +137,19 @@ class ConstraintRanker:
     避免每轮、每个候选都重新跑一遍正则抽取（50k 商品规模下这个差别是几十毫秒 vs 几百毫秒）。
     """
 
-    def __init__(self, catalog_index: CatalogIndex) -> None:
+    def __init__(
+        self,
+        catalog_index: CatalogIndex,
+        ranking_config: RankingConfig = DEFAULT_RANKING_CONFIG,
+    ) -> None:
         self._catalog = catalog_index
+        self._config = ranking_config
 
     def rerank(self, candidates: list[Candidate], state: Any) -> list[Candidate]:
         positive = getattr(state, "positive_slots", None) or {}
         negative = getattr(state, "negative_slots", None) or {}
-        if not positive and not negative:
+        query_tokens = set(_terms(str(getattr(state, "last_query", "") or "")))
+        if not positive and not negative and not query_tokens:
             return sorted(candidates, key=lambda c: (-c.score, c.parent_asin))
 
         budget_values = positive.get("budget") or []
@@ -141,7 +163,11 @@ class ConstraintRanker:
             bonus = 0.0
             penalty = 0.0
 
-            surface = (cand.search_text or "").lower()
+            surface = normalize_token(cand.search_text or "")
+            if query_tokens and self._config.query_coverage_enabled:
+                surface_tokens = set(_terms(surface))
+                coverage = len(query_tokens & surface_tokens) / len(query_tokens)
+                bonus += self._config.query_coverage_weight * coverage
 
             for key in _ATTR_KEYS_FOR_RANKING:
                 pos_values = positive.get(key)
@@ -158,12 +184,12 @@ class ConstraintRanker:
                     hit = any(v in surface for v in pos_norm if len(v) >= 3)
                 if key == "color":
                     if hit:
-                        bonus += _COLOR_BONUS
+                        bonus += self._config.color_bonus
                     # 不匹配 / 多色 / 缺失一律中性：不扣分、不过滤
                     continue
                     #color 命中加 1.5 分；无论是否命中都 continue，不进入通用加分，也不扣分
                 if hit:
-                    bonus += _POSITIVE_BONUS
+                    bonus += self._config.positive_bonus
 
             for key in _ATTR_KEYS_FOR_RANKING:
                 neg_values = negative.get(key)
@@ -185,12 +211,12 @@ class ConstraintRanker:
                 if not neg_hit and key in _SUBSTRING_FALLBACK_KEYS:
                     neg_hit = any(v in surface for v in neg_norm if len(v) >= 3)
                 if neg_hit:
-                    penalty += _NEGATIVE_PENALTY
+                    penalty += self._config.negative_penalty
 
             price = cand.product.get("price")
             if isinstance(price, (int, float)) and budget_hi is not None:
-                if price > budget_hi * _BUDGET_TOLERANCE:
-                    penalty += _BUDGET_PENALTY
+                if price > budget_hi * self._config.budget_tolerance:
+                    penalty += self._config.budget_penalty
             # price is None -> 完全不参与预算判断，资格保留
 
             adjusted.append(

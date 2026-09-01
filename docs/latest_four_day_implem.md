@@ -142,6 +142,13 @@ QuestionPolicyConfig:
 
 RankingConfig:
   color_conflict_mode: str     # 默认 positive_evidence_only；parent product 不做 color penalty
+  positive_bonus: float        # 默认 2.0
+  negative_penalty: float      # 默认 6.0
+  color_bonus: float           # 默认 1.5
+  budget_penalty: float        # 默认 0.5
+  budget_tolerance: float      # 默认 1.15
+  query_coverage_enabled: bool # 默认 True
+  query_coverage_weight: float # 默认 20.0
 ~~~
 
 解释：
@@ -151,6 +158,7 @@ RankingConfig:
 - intent_epoch 表示第几次意图。用户明确替换需求时加一。
 - mode 默认 simulator_optimized。未来 private simulator 若改变 other 行为，只改 config，不改 Agent 主链路。
 - color_conflict_mode 默认 positive_evidence_only：明确命中用户所需 color 才加分；其他颜色、多色、缺失或不可靠 color 一律中性。已确认 parent_asin 是可能包含多个 SKU variant 的 parent product，所以任何 non-match color 都不是负向证据，不做 penalty 或 hard filter。
+- E4 V4 将所有当前 ranking constants 冻结在 RankingConfig 中；default values 是已验证的 lexical baseline，不得在 release 阶段调参。
 - 主办方待确认问题与每种答复的配置动作见 docs/organizer_engineer_qa.md。未得到答复不能阻塞 P0/P1；P2 的提交须同时满足实验 gate 与运行/提交边界。
 
 规则：
@@ -278,7 +286,7 @@ B 负责 user_message → parse → SessionState → query / ask_attribute。官
 - 定义 is_strong_override(message, parsed, state)。实现为两个明确分支：(a) ignore my earlier/previous preference、forget what I said、start over 等显式撤销短语，直接 reset；(b) instead、rather than、change from、switch from 等替换短语，且本轮具有非空 normalized_query 或新 slot 时 reset。不能只匹配单个单词 change、switch 或 rather。
 - actually 单独出现永远不是 reset 信号；actually 加一个普通新 slot 也只合并。例如 Actually, I also want blue 必须保留旧 cotton。公开 evaluator 的 Override 句含 ignore my earlier preference，因此仍会被第一分支稳定识别。
 - 实现 StateManager.reset(session_id, profile)、update(session_id, message, turn)、build_query(state)。
-- Override 时清空当前意图的 positive/negative slots、asked_specific_attributes、no_preference_attributes 与 other_exhausted；再合并本轮 slots 并增加 intent_epoch。
+- Override 时清空当前意图的 positive/negative preference slots、asked_specific_attributes、no_preference_attributes 与 other_exhausted；若 replacement turn 没有给出新的 category，则保留当前 product family category。`instead of`、`rather than`、`change from ... to`、`switch from ... to` 的旧侧 value 不得重新写入新 intent；随后合并新侧 slots 并增加 intent_epoch。
 - build_query 只使用当前意图有效正向条件和商品类型。profile tags 仅交给 A 作极弱 tie-break，profile summary 不进入 query。
 
 **src/policy.py**
@@ -299,7 +307,7 @@ ask_attribute 是 evaluator 消费的结构化字段；message 只是给 demo �
 覆盖：
 
 - session 隔离、cumulative query、negative condition。
-- 普通 actually 合并；显式撤销、instead、rather than 的强 Override reset；孤立 change/rather 不 reset。
+- 普通 `actually` 合并；显式撤销、`instead`、`rather than` 的强 Override reset；孤立 `change`/`rather` 不 reset。replacement statement 的旧侧 size、budget、lexical feature 与 raw feature 必须被丢弃，新侧 value 仍须正常解析。
 - 使用 released template 验证 Boundary：首次 no preference for other 后仍请求 other；只有 no additional preference for other 才 exhausted；Turn 10 为 None。
 - category 与 brand 永不被选择。
 - simulator_optimized 与 information_gain 两种 config mode。
@@ -411,9 +419,9 @@ D 负责入口、最终 response 和交付闭环。A/B/C 单独正确不代表 e
 **starter/agent.py 与 src/agent.py**
 
 - starter/agent.py 仅 re-export，所有业务逻辑只维护在 src.agent.Agent。
-- Agent.__init__(catalog_path) 初始化 A 的 catalog、B 的 manager/policy、config 与 C 的 optional retriever。
+- Agent.__init__(catalog_path) 初始化 A 的 catalog、B 的 manager/policy、config 与 C 的 optional retriever；缺失 catalog 或少于 10 个 unique parent_asin 时必须 fail fast。
 - reset(session_id, user_profile) 必须建立独立 state。
-- respond(session_id, user_message, turn, top_k) 严格按第 2.4 节顺序调用；任何模块失败都使用 A 的 fallback 返回合法结果。
+- respond(session_id, user_message, turn, top_k) 严格按第 2.4 节顺序调用；retriever/ranker 的 runtime exception 必须使用 A 的 stable fallback 返回合法结果。
 - 返回 string message、allowed ask_attribute 或 None、按顺序的 recommendations、以及本地路径零 token usage。
 - 不写 persistent Trace、不读 labels、不写 catalog。
 
@@ -533,7 +541,7 @@ Report integration assumptions, changed files, tests, and results.
 - 每轮 response 有 string message、allowed ask_attribute，并恰好有 10 个有效且唯一 parent_asin；候选不足时由稳定 fallback 补齐。
 - Turn 1–9 默认持续 other，直到真正 exhausted；Turn 10 才返回 None。
 - 使用 released template 回归 other-until-exhausted：首次 no preference 后继续请求 other，只有 no additional preference 才视为 exhausted。
-- actually 单独出现不 reset；明确替换意图会清空旧 intent state。
+- `actually` 单独出现不 reset；明确替换意图会清空旧 preference state，但 replacement turn 未提供新 category 时保留当前 product family category；replacement 旧侧 value 不得重新进入 state。
 - black 等明确 color 命中可加分；non-match、多色、缺失或不可靠 color 均中性，不做 penalty 或 hard filter。
 - category、brand 不主动询问，但可用于 ranking。
 - price=None 保留候选；negative token 不进 FTS 正向 query。
