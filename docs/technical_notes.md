@@ -1,5 +1,10 @@
 # Shopping Copilot：技术术语、数据架构与模型笔记
 
+> **文档状态：** 本文包含早期 `architecture exploration`。当前实现、优先级与实验命名以
+> `docs/latest_four_day_implem.md`、`docs/experiment_log.md` 和实际 `source code` 为准。
+> 文中的 `Dense Retrieval`、`RRF`、neural `reranker` 与 external `LLM` 章节均为
+> `future design`，不表示这些能力已经进入当前 MVP。
+>
 > 读者假设：你有 `Data Science` / `Statistics` 基础，但第一次接触 `Information Retrieval`、`LLM Agent` 和推荐系统工程。
 >
 > 阅读原则：本笔记用中文解释；所有重要的技术词、字段名、模型名、函数名与指标名保留 English，方便你之后阅读代码、模型文档和比赛资料。
@@ -551,7 +556,7 @@ Top-200 而非 Top-50 的原因是：负向条件、预算和硬约束在后处�
 
 确保相同输入输出稳定顺序。
 
-### 7.3 P1 Dense + RRF
+### 7.3 Future P2-Dense + RRF（not implemented）
 
 DenseRetriever 在已安装 sentence-transformers 且模型可用时：
 
@@ -584,7 +589,7 @@ DenseRetriever 在已安装 sentence-transformers 且模型可用时：
 
 应为 simulator 规则写测试：某些 metadata 约束归属 feature，而非直觉上的 color 或 style。产品文案可询问更自然的问题，但 ask_attribute 必须为官方允许值。
 
-## 9. 可选 LLM fallback
+## 9. Future P3：可选 LLM fallback（not implemented）
 
 触发条件：
 
@@ -638,12 +643,16 @@ Agent 仅依赖抽象 provider，不直接连接数据库、CRM 或外部用户�
 
 | ID | 配置 | 决策 |
 |---|---|---|
-| E0 | 官方 starter BM25 | 确认环境与 baseline |
-| E1 | E0 + SessionState + cumulative query | 验证多轮 state |
-| E2 | E1 + metadata bonus + negative constraints + policy | 离线 MVP 候选版本 |
-| E3 | E2 + dense + RRF | 仅在 Hit Rate 提升时保留 |
-| E4 | E3 + reranker | 仅在 MRR/延迟收益合理时保留 |
-| E5 | E4 + LLM fallback | 仅在复杂语言收益明确且不影响离线回退时保留 |
+| E0 | Official starter baseline | 已冻结的官方 baseline |
+| E1 | Deterministic A/B/D integration | 已实现并验证 |
+| E2 | Preference Override category preservation | 已实现并验证 |
+| E3 | Cumulative query coverage reranking（commit `17313be`） | 已实现并验证 |
+| E4 V1 | Catalog precision hardening | 已实现并验证 |
+| E4 V3 | Replacement-side parser isolation | 已实现并验证 |
+| E4 V4 | `RankingConfig` plumbing；默认 algorithm 不变 | 当前 configuration refactor |
+| E5 | Release-readiness、fallback contract、README | 后续实施阶段 |
+| P2-Dense | Future Dense Top-200 + RRF | 尚未实现，受 runtime/package gate 限制 |
+| P3 | Reranker、external LLM、fine-tuning | 不属于当前 MVP |
 
 ### 11.2 防止过拟合
 
@@ -837,12 +846,16 @@ export OPENROUTER_MODEL="provider/model-name"
 
 | Experiment ID | 系统配置 | 目的 |
 |---|---|---|
-| `E0` | 官方 weak `BM25 starter` | 确认 evaluator 与环境正确 |
-| `E1` | `BM25` + cumulative `SessionState` | 证明多轮 query accumulation 有用 |
-| `E2` | `E1` + metadata bonus / negative constraints | 改善 Buying 与 Intent Override |
-| `E3` | `E2` + `bge-small-en-v1.5` + `RRF` | 改善 Browsing 语义召回 |
-| `E4` | `E3` + MiniLM reranker | 测试是否改善 MRR 且 latency 可接受 |
-| `E5` | `E4` + optional OpenRouter fallback | 测试复杂文本解析是否真实有增益 |
+| `E0` | Official starter baseline | 确认 evaluator 与环境正确 |
+| `E1` | Deterministic A/B/D integration | 建立完整 offline Agent pipeline |
+| `E2` | Preference Override category preservation | 改善 Intent Override |
+| `E3` | Cumulative query coverage reranking（commit `17313be`） | 改善已召回候选的排序 |
+| `E4 V1` | Catalog precision hardening | 修复 structured attribute normalization |
+| `E4 V3` | Replacement-side parser isolation | 防止 Override 旧侧条件泄漏 |
+| `E4 V4` | `RankingConfig` plumbing；默认 algorithm 不变 | 支持 ablation、记录与 rollback |
+| `E5` | Release-readiness、fallback contract、README | 完成交付闭环 |
+| `P2-Dense` | Future Dense Top-200 + RRF | 尚未实现；仅在 gate 通过后实验 |
+| `P3` | Reranker、external LLM、fine-tuning | 不属于当前 MVP |
 
 每次运行记录 overall score、四类 scenario 分数、总 latency、是否依赖 network、token usage。若一个模块让分数下降、变慢太多或破坏 offline path，就以 feature flag 关闭它。
 
