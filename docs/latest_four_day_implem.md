@@ -142,6 +142,13 @@ QuestionPolicyConfig:
 
 RankingConfig:
   color_conflict_mode: str     # 默认 positive_evidence_only；parent product 不做 color penalty
+  positive_bonus: float        # 默认 2.0
+  negative_penalty: float      # 默认 6.0
+  color_bonus: float           # 默认 1.5
+  budget_penalty: float        # 默认 0.5
+  budget_tolerance: float      # 默认 1.15
+  query_coverage_enabled: bool # 默认 True
+  query_coverage_weight: float # 默认 20.0
 ~~~
 
 解释：
@@ -151,6 +158,7 @@ RankingConfig:
 - intent_epoch 表示第几次意图。用户明确替换需求时加一。
 - mode 默认 simulator_optimized。未来 private simulator 若改变 other 行为，只改 config，不改 Agent 主链路。
 - color_conflict_mode 默认 positive_evidence_only：明确命中用户所需 color 才加分；其他颜色、多色、缺失或不可靠 color 一律中性。已确认 parent_asin 是可能包含多个 SKU variant 的 parent product，所以任何 non-match color 都不是负向证据，不做 penalty 或 hard filter。
+- E4 V4 将所有当前 ranking constants 冻结在 RankingConfig 中；default values 是已验证的 lexical baseline，不得在 release 阶段调参。
 - 主办方待确认问题与每种答复的配置动作见 docs/organizer_engineer_qa.md。未得到答复不能阻塞 P0/P1；P2 的提交须同时满足实验 gate 与运行/提交边界。
 
 规则：
@@ -411,9 +419,9 @@ D 负责入口、最终 response 和交付闭环。A/B/C 单独正确不代表 e
 **starter/agent.py 与 src/agent.py**
 
 - starter/agent.py 仅 re-export，所有业务逻辑只维护在 src.agent.Agent。
-- Agent.__init__(catalog_path) 初始化 A 的 catalog、B 的 manager/policy、config 与 C 的 optional retriever。
+- Agent.__init__(catalog_path) 初始化 A 的 catalog、B 的 manager/policy、config 与 C 的 optional retriever；缺失 catalog 或少于 10 个 unique parent_asin 时必须 fail fast。
 - reset(session_id, user_profile) 必须建立独立 state。
-- respond(session_id, user_message, turn, top_k) 严格按第 2.4 节顺序调用；任何模块失败都使用 A 的 fallback 返回合法结果。
+- respond(session_id, user_message, turn, top_k) 严格按第 2.4 节顺序调用；retriever/ranker 的 runtime exception 必须使用 A 的 stable fallback 返回合法结果。
 - 返回 string message、allowed ask_attribute 或 None、按顺序的 recommendations、以及本地路径零 token usage。
 - 不写 persistent Trace、不读 labels、不写 catalog。
 
