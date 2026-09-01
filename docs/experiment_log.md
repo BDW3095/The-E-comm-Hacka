@@ -214,6 +214,49 @@ Decision: keep E4 V1. The catalog and fallback-matching correctness improvements
 
 Decision: keep E4 V3. Public metrics are unchanged from E3/E4 V1, while replacement-language correctness and the declared Override contract are now protected by regressions.
 
+## E4 V4 — RankingConfig plumbing
+
+- Date: 2026-09-01
+- E4 V4 source commit: `814cb987c8672f51d4073d4d49c0aa2ff4450928`
+- Base: E4 V3 documentation snapshot `97ae721` on `exp/e4-a-b-hardening`.
+- Branch: `refactor/e4-v4-ranking-config`
+- Change: move the existing ranking constants into a validated, frozen `RankingConfig`, inject it through `Agent` into `ConstraintRanker`, and expose an optional constructor argument for offline ablation. Default values preserve the E4 V3 algorithm exactly.
+- Default config:
+  - `color_conflict_mode="positive_evidence_only"`
+  - `positive_bonus=2.0`
+  - `negative_penalty=6.0`
+  - `color_bonus=1.5`
+  - `budget_penalty=0.5`
+  - `budget_tolerance=1.15`
+  - `query_coverage_enabled=True`
+  - `query_coverage_weight=20.0`
+- Validation:
+  - Targeted catalog/Agent regression: `68 passed`.
+  - Full repository regression: `107 passed`.
+  - `git diff --check`: passed.
+  - Invalid modes, negative/non-finite weights, an invalid budget tolerance, and a non-boolean coverage flag are rejected by unit tests.
+- Command: `python3 -m evaluator.local_evaluator --output /private/tmp/e4_v4_ranking_config_results.json`
+- Runtime: approximately 27 seconds for 200 public sessions on the local macOS Python 3.11 environment.
+- Network/model usage: none; reported tokens: 0; `SEMANTIC_ENABLED=False`.
+- Raw evaluator output: local temporary artifact; not committed.
+
+| Metric | E4 V3 | E4 V4 | Delta |
+|---|---:|---:|---:|
+| Hit Rate@10 | 0.880000 | 0.880000 | 0.000000 |
+| MRR | 0.554861 | 0.554861 | 0.000000 |
+| MTTC | 3.330000 | 3.330000 | 0.000000 |
+| Efficiency | 0.767000 | 0.767000 | 0.000000 |
+| TechnicalScore | **0.759858** | **0.759858** | **0.000000** |
+
+| Scenario | E4 V3 Hit@10 | E4 V4 Hit@10 | E4 V3 MRR | E4 V4 MRR | E4 V3 MTTC | E4 V4 MTTC |
+|---|---:|---:|---:|---:|---:|---:|
+| Boundary | 1.000000 | 1.000000 | 0.743452 | 0.743452 | 3.200000 | 3.200000 |
+| Browsing | 0.937500 | 0.937500 | 0.560813 | 0.560813 | 2.775000 | 2.775000 |
+| Buying | 0.925000 | 0.925000 | 0.591682 | 0.591682 | 2.550000 | 2.550000 |
+| Intent Override | 0.566667 | 0.566667 | 0.377937 | 0.377937 | 6.933333 | 6.933333 |
+
+Decision: keep E4 V4. The configuration plumbing is behavior-preserving under the default values, while controlled tests prove that individual ranking parameters can be changed or disabled for isolated ablation and immediate rollback.
+
 
 ## Open gates
 

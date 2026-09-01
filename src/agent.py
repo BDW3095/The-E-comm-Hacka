@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import CatalogIndex
-from .config import DEFAULT_QUESTION_POLICY_CONFIG, RETRIEVAL_LIMIT
+from .config import (
+    DEFAULT_QUESTION_POLICY_CONFIG,
+    DEFAULT_RANKING_CONFIG,
+    RETRIEVAL_LIMIT,
+    RankingConfig,
+)
 from .policy import QuestionPolicy
 from .retrieval import ConstraintRanker, LexicalRetriever, validate_recommendations
 from .state import StateManager
@@ -20,9 +25,14 @@ class Agent:
     B question policy -> D response validation/assembly.
     """
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        ranking_config: RankingConfig | None = None,
+    ) -> None:
         self.catalog_path = Path(catalog_path)
         self.question_policy_config = DEFAULT_QUESTION_POLICY_CONFIG
+        self.ranking_config = ranking_config or DEFAULT_RANKING_CONFIG
         self._state_manager = StateManager()
         # Preserve the shared session mapping expected by integration tests.
         self._sessions: dict[str, SessionState] = self._state_manager._states
@@ -34,7 +44,10 @@ class Agent:
         if self.catalog_path.is_file():
             self._catalog = CatalogIndex(self.catalog_path)
             self._retriever = LexicalRetriever(self._catalog)
-            self._ranker = ConstraintRanker(self._catalog)
+            self._ranker = ConstraintRanker(
+                self._catalog,
+                ranking_config=self.ranking_config,
+            )
 
     def reset(self, session_id: str, user_profile: dict[str, Any]) -> None:
         self._state_manager.reset(session_id, user_profile)
