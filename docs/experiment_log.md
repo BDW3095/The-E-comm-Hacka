@@ -257,6 +257,46 @@ Decision: keep E4 V3. Public metrics are unchanged from E3/E4 V1, while replacem
 
 Decision: keep E4 V4. The configuration plumbing is behavior-preserving under the default values, while controlled tests prove that individual ranking parameters can be changed or disabled for isolated ablation and immediate rollback.
 
+## E5 — Release readiness and fallback contracts
+
+* Date: 2026-09-01
+* E5 source snapshot commit: `e64c19c506644412bc3d249f1456fb03ed0de13a`
+* Branch: `fix/e5-release-readiness`
+* Changes:
+
+  * Agent fails fast for a missing catalog or fewer than 10 unique parent_asin.
+  * Empty retrieval and retriever/ranker runtime failures fall back to stable catalog Top-10.
+  * E2E tests cover missing catalog, undersized catalog, empty query, component failures, and invalid/duplicate candidates.
+  * README, requirements, organizer answers, and current plan are synchronized.
+* Validation:
+
+  * `python -m pytest -q`: `113 passed`
+  * `git diff --check`: passed.
+* Command: `time python -m evaluator.local_evaluator --output artifacts/e5_results.json`
+* Runtime: `33.217 seconds total`
+* Network/model usage: none; reported tokens: 0; `SEMANTIC_ENABLED=False`.
+* Raw evaluator output: ignored local artifact; not committed.
+
+### Overall
+
+| Run | Samples |   Hit@10 |      MRR |     MTTC | Efficiency | TechnicalScore | Delta Score |
+| --- | ------: | -------: | -------: | -------: | ---------: | -------------: | ----------: |
+| E5  |     200 | 0.880000 | 0.554861 | 3.330000 |   0.767000 |   **0.759858** |   +0.000000 |
+
+### Per-scenario metrics
+
+| Run | Scenario        | Samples |   Hit@10 | Delta Hit |      MRR | Delta MRR |     MTTC | Delta MTTC |
+| --- | --------------- | ------: | -------: | --------: | -------: | --------: | -------: | ---------: |
+| E5  | Boundary        |      10 | 1.000000 | +0.000000 | 0.743452 | +0.000000 | 3.200000 |  +0.000000 |
+| E5  | Browsing        |      80 | 0.937500 | +0.000000 | 0.560813 | +0.000000 | 2.775000 |  +0.000000 |
+| E5  | Buying          |      80 | 0.925000 | +0.000000 | 0.591682 | +0.000000 | 2.550000 |  +0.000000 |
+| E5  | Intent Override |      30 | 0.566667 | +0.000000 | 0.377937 | +0.000000 | 6.933333 |  +0.000000 |
+
+Decision: keep E5. Release-contract hardening preserves the E4 V4 lexical score and every scenario metric while making invalid local setup fail fast and runtime retrieval/ranking failures recover through catalog-valid Top-10 fallback.
+
+
+
+
 
 ## Open gates
 

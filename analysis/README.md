@@ -2,7 +2,7 @@
 
 `summarize_results.py` is Engineer C's offline testing and experiment-analysis
 tool. It reads evaluator-generated `results.json` files after a run and produces
-deterministic Markdown summaries and E0/E1/E2/E3 comparisons.
+deterministic Markdown summaries and E0 through E5 comparisons.
 
 This directory is **not production Agent code**:
 
@@ -32,5 +32,5 @@ python3 analysis/summarize_results.py \
 Run its tests with:
 
 ```bash
-pytest tests/test_analysis.py -q
+python -m pytest tests/test_analysis.py -q
 ```

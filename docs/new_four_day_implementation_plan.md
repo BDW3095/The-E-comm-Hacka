@@ -1,3 +1,5 @@
+> **Superseded historical plan.** 请勿依据本文实施；使用 `docs/latest_four_day_implem.md`、`docs/experiment_log.md` 与实际 source code 作为当前依据。
+
 # Muse Shopping Copilot：4 天实施计划、四人分工与 Coding Agent 指南
 
 > 目标：在 4 天内交付一个可由官方 evaluator 直接评分、可在断网环境运行的 offline-first Python Agent。系统每轮都输出有效 Top-10 parent_asin，并以 Hit Rate@10、MRR 与 Efficiency 为唯一优化依据。

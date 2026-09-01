@@ -1,4 +1,4 @@
-"""Official Agent adapter assembling the team's deterministic E1 pipeline."""
+"""Official Agent adapter assembling the team's deterministic E5 release pipeline."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,6 +15,8 @@ from .policy import QuestionPolicy
 from .retrieval import ConstraintRanker, LexicalRetriever, validate_recommendations
 from .state import StateManager
 from .types import Candidate, SessionState
+
+_OFFICIAL_TOP_K = 10
 
 
 class Agent:
@@ -41,13 +43,20 @@ class Agent:
         self._catalog: CatalogIndex | None = None
         self._retriever: LexicalRetriever | None = None
         self._ranker: ConstraintRanker | None = None
-        if self.catalog_path.is_file():
-            self._catalog = CatalogIndex(self.catalog_path)
-            self._retriever = LexicalRetriever(self._catalog)
-            self._ranker = ConstraintRanker(
-                self._catalog,
-                ranking_config=self.ranking_config,
+        if not self.catalog_path.is_file():
+            raise FileNotFoundError(f"catalog file not found: {self.catalog_path}")
+
+        self._catalog = CatalogIndex(self.catalog_path)
+        if len(self._catalog.valid_ids) < _OFFICIAL_TOP_K:
+            raise RuntimeError(
+                "catalog integrity error: official Agent requires at least "
+                f"{_OFFICIAL_TOP_K} unique parent_asin"
             )
+        self._retriever = LexicalRetriever(self._catalog)
+        self._ranker = ConstraintRanker(
+            self._catalog,
+            ranking_config=self.ranking_config,
+        )
 
     def reset(self, session_id: str, user_profile: dict[str, Any]) -> None:
         self._state_manager.reset(session_id, user_profile)
@@ -62,15 +71,13 @@ class Agent:
         state = self._state_manager.update(session_id, str(user_message), int(turn))
         candidates = self._retrieve_and_rank(state)
 
-        if self._catalog is None:
-            recommendations: list[dict[str, Any]] = []
-        else:
-            recommendations = validate_recommendations(
-                candidates,
-                valid_ids=self._catalog.valid_ids,
-                fallback_ids=self._catalog.stable_fallback_ids(),
-                top_k=int(top_k),
-            )
+        assert self._catalog is not None
+        recommendations = validate_recommendations(
+            candidates,
+            valid_ids=self._catalog.valid_ids,
+            fallback_ids=self._catalog.stable_fallback_ids(),
+            top_k=int(top_k),
+        )
 
         ask_attribute = self._question_policy.choose_attribute(state, candidates, int(turn))
         return {
@@ -83,5 +90,8 @@ class Agent:
     def _retrieve_and_rank(self, state: SessionState) -> list[Candidate]:
         if self._retriever is None or self._ranker is None:
             return []
-        candidates = self._retriever.retrieve(state.last_query, limit=RETRIEVAL_LIMIT)
-        return self._ranker.rerank(candidates, state)
+        try:
+            candidates = self._retriever.retrieve(state.last_query, limit=RETRIEVAL_LIMIT)
+            return self._ranker.rerank(candidates, state)
+        except Exception:
+            return []
